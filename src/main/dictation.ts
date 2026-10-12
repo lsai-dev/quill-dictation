@@ -108,6 +108,7 @@ export class Dictation extends EventEmitter {
     });
     const session = this.session;
     this.maxTimer = setTimeout(() => session === this.session && this.finish(), MAX_RECORDING_MS);
+    log.info(`dictation ${this.session}: listening`);
     this.emit('phase', this.phase);
   }
 
@@ -115,6 +116,7 @@ export class Dictation extends EventEmitter {
     if (this.phase !== 'listening') return;
     this.phase = 'stopping';
     this.clearTimer();
+    log.info(`dictation ${this.session}: stopping`);
     this.d.overlay.send({ type: 'stop' }); // overlay replies with the captured audio
     this.emit('phase', this.phase);
   }
@@ -130,6 +132,7 @@ export class Dictation extends EventEmitter {
   }
 
   private fail(message: string) {
+    log.info(`dictation ${this.session}: ${message}`);
     this.session++;
     this.phase = 'idle';
     this.clearTimer();
@@ -149,6 +152,7 @@ export class Dictation extends EventEmitter {
       return;
     }
     this.phase = 'processing';
+    log.info(`dictation ${session}: transcribing ${(audio.length / SAMPLE_RATE).toFixed(1)} s (${(analysis.speechMs / 1000).toFixed(1)} s of speech)`);
     this.d.overlay.send({ type: 'process' });
     this.emit('phase', this.phase);
 

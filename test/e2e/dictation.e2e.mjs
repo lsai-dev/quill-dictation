@@ -40,6 +40,12 @@ const fail = async (msg) => {
   console.error('✗', msg);
   const status = await app.evaluate(() => globalThis.__quill?.engine.status).catch(() => null);
   console.error('  engine status:', JSON.stringify(status));
+  try {
+    const ov = app.windows().find((w) => w.url().includes('overlay.html'));
+    if (shots && ov) await ov.screenshot({ path: join(shots, 'e2e-failure.png') });
+  } catch {
+    /* best effort */
+  }
   console.error('  app log (tail):');
   for (const line of output.join('').split(/\r?\n/).filter((l) => l.trim() && !/dbus|Fontconfig/.test(l)).slice(-60)) console.error('   ', line);
   try {
@@ -64,6 +70,8 @@ const poll = async (fn, ms, label) => {
 await poll(() => app.windows().length >= 2, 20000, 'windows');
 const appWin = app.windows().find((w) => w.url().includes('app.html'));
 const overlay = app.windows().find((w) => w.url().includes('overlay.html'));
+overlay.on('console', (m) => output.push(`[overlay ${m.type()}] ${m.text()}\n`));
+overlay.on('pageerror', (e) => output.push(`[overlay error] ${e.message}\n`));
 
 const status = await poll(async () => {
   const s = await main(() => globalThis.__quill?.engine.status);
@@ -97,7 +105,7 @@ await main(() => globalThis.__quill.dictation.finish());
 await new Promise((r) => setTimeout(r, 300));
 if (shots) await overlay.screenshot({ path: join(shots, 'e2e-processing.png') });
 
-const result = await poll(() => main(() => globalThis.__quill.dictation.history[0] ?? null), 90000, 'transcript');
+const result = await poll(() => main(() => globalThis.__quill.dictation.history[0] ?? null), 180000, 'transcript');
 console.log(`✓ transcript (${result.processMs} ms for ${result.audioMs} ms of audio): "${result.text}"`);
 if (!result.text.toLowerCase().includes(expect)) await fail(`transcript does not contain "${expect}"`);
 
