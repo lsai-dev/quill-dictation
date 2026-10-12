@@ -64,6 +64,7 @@ export class Ribbon {
   private sweep = -1;
   private sweepActive = false;
   private noiseFloor = -60;
+  private sinceRender = Infinity;
 
   constructor(canvas: HTMLCanvasElement, opts: RibbonOptions = {}) {
     this.renderer = new RibbonRenderer(canvas, opts);
@@ -421,7 +422,14 @@ export class Ribbon {
       shadow: clamp(this.opacity.value) * smoothstep(0.1, 0.8, this.extent.value),
       brightness: this.brightness.value,
     };
-    if (!skipRender) this.renderer.render(params);
+    // On software WebGL, draw fewer frames (motion stays correct; only the
+    // frame rate drops) so the processor is free for transcription.
+    this.sinceRender += dt;
+    const minInterval = this.renderer.software ? (this.persistent ? 1 / 15 : 1 / 30) : 0;
+    if (!skipRender && (this.sinceRender >= minInterval || dt === 0 || this.manual)) {
+      this.sinceRender = 0;
+      this.renderer.render(params);
+    }
   }
 
   dispose() {

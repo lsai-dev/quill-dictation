@@ -58,6 +58,12 @@ export class RibbonRenderer {
   private indexCount = 0;
   /** True while the GPU context is lost (driver reset, sleep/resume…). */
   lost = false;
+  /**
+   * True when WebGL runs on the CPU (no GPU acceleration: VMs, Remote Desktop,
+   * blocklisted drivers). The ribbon then renders more cheaply so it never
+   * competes with transcription for the processor.
+   */
+  readonly software: boolean;
   onLost?: () => void;
   onRestored?: () => void;
   private layers: Target[] = [];
@@ -91,6 +97,13 @@ export class RibbonRenderer {
     });
     if (!gl) throw new Error('WebGL2 unavailable');
     this.gl = gl;
+    const info = gl.getExtension('WEBGL_debug_renderer_info');
+    const rendererName = String(info ? gl.getParameter(info.UNMASKED_RENDERER_WEBGL) : gl.getParameter(gl.RENDERER));
+    this.software = /swiftshader|llvmpipe|softpipe|warp|basic render|software/i.test(rendererName);
+    if (this.software) {
+      this.opts.supersample = 1;
+      this.opts.layers = Math.min(this.opts.layers, 2);
+    }
     // Survive GPU resets: keep the canvas, rebuild every resource on restore.
     canvas.addEventListener('webglcontextlost', (e) => {
       e.preventDefault();
