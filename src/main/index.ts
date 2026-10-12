@@ -208,7 +208,7 @@ async function main() {
   });
 
   // End-to-end tests drive the real pipeline through this handle (never set in normal use).
-  if (process.env.QUILL_E2E) (globalThis as Record<string, unknown>).__quill = { dictation, engine, settings, downloads, hotkey, native };
+  if (process.env.QUILL_E2E) (globalThis as Record<string, unknown>).__quill = { dictation, engine, settings, downloads, hotkey, native, hardware: () => ({ hardware, recs }) };
 
   applyLoginItem(settings.get().launchAtLogin);
   await refreshHardware();

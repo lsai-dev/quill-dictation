@@ -59,6 +59,13 @@ const status = await poll(async () => {
   return s?.state === 'ready' ? s : null;
 }, 120000, 'engine ready');
 console.log(`✓ engine ready: ${status.modelId} on ${status.device} (${status.loadMs} ms)`);
+const hw = await main(() => {
+  const { hardware, recs } = globalThis.__quill.hardware();
+  const q = globalThis.__quill;
+  return { cpu: hardware?.cpu.brand, avx2: hardware?.cpu.avx2, gpus: hardware?.gpus.map((g) => g.name), source: hardware?.source, pick: recs?.recommended.modelId, device: recs?.device, hotkeyNative: q.hotkey.usingNative, hotkeyError: q.hotkey.error };
+});
+console.log(`✓ hardware: ${JSON.stringify(hw)}`);
+if (process.platform === 'win32' && !hw.hotkeyNative) await fail(`Win+Space hook not active: ${hw.hotkeyError}`);
 
 // A focused text field to dictate into.
 await appWin.evaluate(() => {

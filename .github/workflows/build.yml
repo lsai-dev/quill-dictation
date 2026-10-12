@@ -65,3 +65,21 @@ jobs:
           name: Quill-Windows
           path: release/*.exe
           if-no-files-found: error
+      - name: Fetch a test model and a speech sample
+        shell: bash
+        run: |
+          mkdir -p e2e
+          curl -sSfL --retry 3 -o e2e/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+          curl -sSfL --retry 3 -o e2e/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+      - name: End-to-end dictation on Windows (hook, engine, paste)
+        run: node test/e2e/dictation.e2e.mjs
+        env:
+          QUILL_MODEL: e2e/ggml-tiny.en.bin
+          QUILL_AUDIO: e2e/jfk.wav
+          QUILL_SHOTS: e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: e2e/*.png
+          if-no-files-found: ignore
