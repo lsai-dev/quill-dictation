@@ -1,0 +1,53 @@
+name: Bug report
+description: Something isn't working the way it should.
+labels: [bug]
+body:
+  - type: markdown
+    attributes:
+      value: Thanks for taking the time. A few details help us fix it faster.
+  - type: textarea
+    id: what
+    attributes:
+      label: What happened?
+      description: Describe what you saw, and what you expected instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: Steps to reproduce
+      placeholder: |
+        1. Press Win + Space in …
+        2. Say …
+        3. …
+    validations:
+      required: true
+  - type: input
+    id: version
+    attributes:
+      label: Quill version
+      description: Shown in Settings.
+      placeholder: "0.2.0"
+    validations:
+      required: true
+  - type: input
+    id: windows
+    attributes:
+      label: Windows version
+      placeholder: "Windows 11 23H2"
+  - type: input
+    id: hardware
+    attributes:
+      label: Processor and graphics card
+      placeholder: "Ryzen 5 5600X, RTX 3060"
+  - type: input
+    id: models
+    attributes:
+      label: Models in use
+      description: Your dictation model, and your cleanup model if Cleanup is on.
+  - type: textarea
+    id: logs
+    attributes:
+      label: Logs
+      description: Optional. Paste anything relevant from quill.log. Please remove anything private first.
+      render: text
