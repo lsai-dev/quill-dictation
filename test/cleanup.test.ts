@@ -32,6 +32,7 @@ describe('acceptCleanup: what faithful cleanup may do', () => {
     ok('send it to John, sorry, to Jane', 'Send it to John, sorry, to Jane.');
     ok('that was, I mean, really good', 'That was really good.');
     ok('the red one, no wait, the blue one', 'The blue one.');
+    ok('send it to marketing or rather to sales', 'Send it to sales.');
   });
 
   it('treats Spanish spelling variants of "and" and "or" as the same word', () => {

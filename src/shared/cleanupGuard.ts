@@ -268,7 +268,9 @@ export function acceptCleanup(original: string, output: string): GuardResult {
   if (li && lo && li !== lo) return reject('language');
 
   // Nothing important lost: cleanup removes fillers and corrected phrases, not content.
-  const content = inWords.filter((w) => w.length >= 3 && !FILLERS.has(w) && !isNumberWord(w));
+  // The cue itself ("or rather", "scratch that") is not content.
+  const spoken = corrected ? canonicalWords(original.replace(new RegExp(CORRECTION_CUE.source, 'gi'), ' ')) : inWords;
+  const content = spoken.filter((w) => w.length >= 3 && !FILLERS.has(w) && !isNumberWord(w));
   if (content.length >= 3) {
     const outSet = new Set(outWords);
     const kept = content.filter((w) => outSet.has(w)).length / content.length;
