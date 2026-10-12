@@ -5,6 +5,7 @@ import { AnyRibbon, createRibbon } from '../../ribbon';
 import { api, subscribe } from '../store';
 import { h, icons, keycaps, relativeTime, svg } from '../ui';
 import { navigate } from '../router';
+import { UpdateBanner } from './updateBanner';
 
 export function HomeView() {
   const canvas = h('canvas', { class: 'hero-canvas', 'aria-hidden': 'true' });
@@ -19,6 +20,7 @@ export function HomeView() {
   const el = h(
     'section',
     { class: 'view home' },
+    UpdateBanner(),
     h(
       'div',
       { class: 'hero card' },

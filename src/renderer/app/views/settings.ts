@@ -1,4 +1,4 @@
-import type { AppSnapshot, Settings } from '../../../shared/types';
+import type { AppSnapshot, Settings, UpdateStatus } from '../../../shared/types';
 import { api, subscribe } from '../store';
 import { h, icons, keycaps, segmented, select, svg, toggle } from '../ui';
 
@@ -22,6 +22,34 @@ function row(label: string, control: Node, detail?: string) {
   return h('div', { class: 'row setting' }, h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, label), detail ? h('p', { class: 'row-sub' }, detail) : null), h('div', { class: 'row-side' }, control));
 }
 
+function updateText(u: UpdateStatus): string {
+  switch (u.state) {
+    case 'checking':
+      return 'Checking for updates…';
+    case 'up-to-date':
+      return `Quill ${u.currentVersion} is up to date.`;
+    case 'available':
+      return `Quill ${u.version} is available.`;
+    case 'downloading':
+      return `Downloading… ${Math.floor(u.percent)}%`;
+    case 'ready':
+      return `Quill ${u.version} is ready to install.`;
+    case 'error':
+      return u.message;
+    case 'unsupported':
+      return 'Updates are delivered to installed copies of Quill.';
+    default:
+      return 'Quill checks for updates automatically.';
+  }
+}
+
+function updateControl(u: UpdateStatus): HTMLElement {
+  if (u.state === 'available') return h('button', { class: 'btn primary', type: 'button', onClick: () => api.downloadUpdate() }, 'Download');
+  if (u.state === 'ready') return h('button', { class: 'btn primary', type: 'button', onClick: () => api.installUpdate() }, 'Restart to Update');
+  const busy = u.state === 'checking' || u.state === 'downloading' || u.state === 'unsupported';
+  return h('button', { class: 'btn', type: 'button', disabled: busy, onClick: () => api.checkForUpdates() }, 'Check Now');
+}
+
 function group(title: string, ...rows: Node[]) {
   return h('div', { class: 'group' }, h('h2', { class: 'group-title' }, title), h('div', { class: 'card list' }, ...rows));
 }
@@ -33,7 +61,7 @@ export function SettingsView() {
   let built = '';
   subscribe((s) => {
     // Rebuild only when something structural changes, so controls keep focus.
-    const key = JSON.stringify({ ...s.settings, customVocabulary: undefined, hk: s.hotkeyError });
+    const key = JSON.stringify({ ...s.settings, customVocabulary: undefined, hk: s.hotkeyError, up: [s.update.state, 'version' in s.update ? s.update.version : ''] });
     if (key === built) return;
     built = key;
     const scroll = el.parentElement?.scrollTop ?? 0;
@@ -127,6 +155,7 @@ function build(s: AppSnapshot): Node[] {
         s.recommendations ? `Currently: ${s.recommendations.deviceLabel}` : undefined,
       ),
     ),
+    group('Updates', row('Software update', updateControl(s.update), updateText(s.update))),
     h(
       'div',
       { class: 'about' },

@@ -23,6 +23,9 @@ const api = {
   copyText: (t: string) => ipcRenderer.invoke(IPC.copyText, t),
   clearHistory: () => ipcRenderer.invoke(IPC.clearHistory),
   openModelsFolder: () => ipcRenderer.invoke(IPC.openModelsFolder),
+  checkForUpdates: () => ipcRenderer.invoke(IPC.checkForUpdates),
+  downloadUpdate: () => ipcRenderer.invoke(IPC.downloadUpdate),
+  installUpdate: () => ipcRenderer.invoke(IPC.installUpdate),
 };
 
 contextBridge.exposeInMainWorld('quill', api);

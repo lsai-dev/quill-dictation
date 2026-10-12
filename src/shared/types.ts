@@ -155,6 +155,13 @@ export interface DictationResult {
   at: number;
 }
 
+export type UpdateStatus =
+  | { state: 'idle' | 'checking' | 'up-to-date' | 'unsupported'; currentVersion: string; checkedAt?: number }
+  | { state: 'available'; currentVersion: string; version: string; notes?: string; checkedAt?: number }
+  | { state: 'downloading'; currentVersion: string; version?: string; notes?: string; percent: number; bytesPerSecond?: number; total?: number }
+  | { state: 'ready'; currentVersion: string; version: string; notes?: string }
+  | { state: 'error'; currentVersion: string; version?: string; message: string };
+
 export interface AppSnapshot {
   settings: Settings;
   hardware: HardwareProfile | null;
@@ -167,4 +174,5 @@ export interface AppSnapshot {
   platform: string;
   hotkeyAvailable: boolean;
   hotkeyError: string | null;
+  update: UpdateStatus;
 }

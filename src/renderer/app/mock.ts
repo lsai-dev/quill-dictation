@@ -35,6 +35,14 @@ export function createMockApi(): NonNullable<Window['quill']> {
   const installed = new Set<string>(params.has('onboarded') ? ['large-v3-turbo-q5_0', 'base.en'] : []);
   const downloads = new Map<string, { received: number; total: number }>();
   let listener: ((s: AppSnapshot) => void) | null = null;
+  // ?update=available|downloading|ready previews the update UI.
+  const u = params.get('update');
+  let update: AppSnapshot['update'] =
+    u === 'available'
+      ? { state: 'available', currentVersion: '0.1.0', version: '0.2.0', notes: 'Faster transcription on graphics cards, a calmer listening animation, and smarter punctuation.' }
+      : u === 'ready'
+        ? { state: 'ready', currentVersion: '0.1.0', version: '0.2.0' }
+        : { state: 'up-to-date', currentVersion: '0.1.0', checkedAt: Date.now() };
 
   const snap = (): AppSnapshot => ({
     settings,
@@ -55,6 +63,7 @@ export function createMockApi(): NonNullable<Window['quill']> {
     platform: 'win32',
     hotkeyAvailable: true,
     hotkeyError: null,
+    update,
   });
   const push = () => listener?.(snap());
 
@@ -92,5 +101,20 @@ export function createMockApi(): NonNullable<Window['quill']> {
     copyText: async () => undefined,
     clearHistory: async () => undefined,
     openModelsFolder: async () => undefined,
+    checkForUpdates: async () => {
+      update = { state: 'checking', currentVersion: '0.1.0' };
+      push();
+      setTimeout(() => { update = { state: 'up-to-date', currentVersion: '0.1.0', checkedAt: Date.now() }; push(); }, 900);
+    },
+    downloadUpdate: async () => {
+      let p = 0;
+      const t = setInterval(() => {
+        p += 7;
+        update = p >= 100 ? { state: 'ready', currentVersion: '0.1.0', version: '0.2.0' } : { state: 'downloading', currentVersion: '0.1.0', version: '0.2.0', percent: p };
+        if (p >= 100) clearInterval(t);
+        push();
+      }, 120);
+    },
+    installUpdate: async () => undefined,
   };
 }

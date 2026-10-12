@@ -26,6 +26,9 @@ export const IPC = {
   clearHistory: 'app:clear-history',
   openModelsFolder: 'app:open-models-folder',
   windowAction: 'app:window-action',
+  checkForUpdates: 'app:check-updates',
+  downloadUpdate: 'app:download-update',
+  installUpdate: 'app:install-update',
 } as const;
 
 export type OverlayAction = 'stop' | 'cancel';

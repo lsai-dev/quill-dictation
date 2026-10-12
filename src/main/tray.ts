@@ -7,6 +7,7 @@ export interface TrayActions {
   quit: () => void;
   hotkeyLabel: () => string;
   modelLabel: () => string;
+  update: () => { label: string; click: () => void };
 }
 
 let tray: Tray | null = null;
@@ -23,7 +24,8 @@ export function createTray(a: TrayActions) {
   tray.setToolTip('Quill');
   let key = '';
   const rebuild = () => {
-    const next = a.hotkeyLabel() + '|' + a.modelLabel();
+    const update = a.update();
+    const next = a.hotkeyLabel() + '|' + a.modelLabel() + '|' + update.label;
     if (next === key) return;
     key = next;
     tray?.setContextMenu(
@@ -34,6 +36,8 @@ export function createTray(a: TrayActions) {
         { label: 'Models…', click: () => a.open('models') },
         { label: 'Settings…', click: () => a.open('settings') },
         { type: 'separator' },
+        { type: 'separator' },
+        { label: update.label, click: update.click },
         { label: 'Open Quill', click: () => a.open() },
         { label: 'Quit Quill', click: a.quit },
       ]),

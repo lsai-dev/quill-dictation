@@ -15,6 +15,7 @@ import { OverlayWindow } from './overlay';
 import { modelsDir, userDir } from './paths';
 import { SettingsStore } from './settings';
 import { createTray } from './tray';
+import { Updater } from './updater';
 
 if (!app.requestSingleInstanceLock()) {
   app.quit();
@@ -33,6 +34,13 @@ async function main() {
   initLog(userDir('logs'));
   log.info(`Quill ${app.getVersion()} starting (${process.platform} ${process.arch})`);
 
+  // CI: exercise the real update feed, then exit.
+  if (process.env.QUILL_UPDATE_SELFTEST) {
+    await new Updater().selfTest(process.env.QUILL_UPDATE_SELFTEST, process.env.QUILL_UPDATE_SELFTEST_FROM);
+    app.exit(0);
+    return;
+  }
+
   // Microphone access for our own windows only.
   session.defaultSession.setPermissionRequestHandler((wc, permission, cb) => cb(permission === 'media' && isOwn(wc.getURL())));
   session.defaultSession.setPermissionCheckHandler((_wc, permission, origin) => permission === 'media' && isOwn(origin));
@@ -42,6 +50,7 @@ async function main() {
   await native.start();
   const engine = new Engine();
   const downloads = new Downloads();
+  const updater = new Updater();
   const hotkey = new Hotkey(native);
   await hotkey.apply(settings.get().hotkey);
   const overlay = new OverlayWindow();
@@ -100,6 +109,7 @@ async function main() {
     platform: process.platform,
     hotkeyAvailable: hotkey.usingNative || !hotkey.error,
     hotkeyError: hotkey.error,
+    update: updater.status,
   });
   let tray: ReturnType<typeof createTray> | null = null;
   let pending: NodeJS.Timeout | null = null;
@@ -135,6 +145,9 @@ async function main() {
   }
 
   engine.on('status', broadcast);
+  updater.on('status', broadcast);
+  updater.isBusy = () => dictation.busy;
+  updater.onOpenApp = () => showAppWindow('home');
   downloads.on('progress', broadcast);
   dictation.on('result', broadcast);
   // Let the app window pause its decorative ribbon while you dictate.
@@ -201,12 +214,22 @@ async function main() {
     broadcast();
   });
   ipcMain.handle(IPC.openModelsFolder, () => shell.openPath(modelsDir()));
+  ipcMain.handle(IPC.checkForUpdates, () => updater.check(true));
+  ipcMain.handle(IPC.downloadUpdate, () => updater.download());
+  ipcMain.handle(IPC.installUpdate, () => updater.install());
 
   tray = createTray({
     dictate: () => (dictation.busy ? dictation.finish() : dictation.start()),
     open: (section) => showAppWindow(section),
     quit: () => app.quit(),
     hotkeyLabel: () => hotkey.activeLabel || label(settings.get().hotkey),
+    update: () => {
+      const u = updater.status;
+      if (u.state === 'available') return { label: `Download Quill ${u.version}…`, click: () => void updater.download() };
+      if (u.state === 'downloading') return { label: `Downloading update… ${Math.floor(u.percent)}%`, click: () => showAppWindow('home') };
+      if (u.state === 'ready') return { label: `Restart to Update to ${u.version}`, click: () => updater.install() };
+      return { label: 'Check for Updates…', click: () => void updater.check(true) };
+    },
     modelLabel: () => {
       const m = modelById(engine.modelId ?? settings.get().modelId);
       return m ? `Model: ${m.name}` : 'No model selected';
@@ -218,6 +241,7 @@ async function main() {
     /* Quill lives in the tray; closing the window doesn't quit. */
   });
   app.on('before-quit', () => {
+    updater.stop();
     void native.stop();
     void engine.unload();
     overlay.destroy();
@@ -229,6 +253,7 @@ async function main() {
   applyLoginItem(settings.get().launchAtLogin);
   await refreshHardware();
   void loadModel();
+  updater.start();
 
   const s = settings.get();
   const launchedHidden = process.argv.includes('--hidden');

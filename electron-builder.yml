@@ -10,6 +10,12 @@ files:
   - dist/renderer/**
   - package.json
 asar: true
+# Releases (and the in-app update feed) live on this repository's GitHub Releases.
+publish:
+  - provider: github
+    owner: lsai-dev
+    repo: quill-dictation
+    releaseType: release
 extraResources:
   # Native sidecars (built by `npm run build:native`).
   - from: resources/bin

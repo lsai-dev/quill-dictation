@@ -3,6 +3,8 @@ name: Build
 on:
   push:
     branches: [main, "claude/**"]
+    # Pushing a tag like v0.2.0 (matching package.json) publishes a release.
+    tags: ["v*"]
   pull_request:
   workflow_dispatch:
 
@@ -28,6 +30,8 @@ jobs:
   windows:
     name: Windows installer
     runs-on: windows-latest
+    permissions:
+      contents: write # publish GitHub Releases on version tags
     env:
       # bindgen (whisper-rs-sys) needs libclang; the runner image ships LLVM here.
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
@@ -70,14 +74,22 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: Package
-        run: npm run dist:win
+      - name: Package (and publish on version tags)
+        shell: bash
+        run: |
+          npm run build
+          if [[ "$GITHUB_REF" == refs/tags/v* ]]; then PUBLISH=always; else PUBLISH=never; fi
+          npx electron-builder --win --x64 --publish "$PUBLISH"
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
       - uses: actions/upload-artifact@v4
         with:
           name: Quill-Windows
-          path: release/*.exe
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
           if-no-files-found: error
       - name: Fetch a test model and a speech sample
         shell: bash
@@ -108,3 +120,17 @@ jobs:
             e2e/*.png
             e2e/*.log
           if-no-files-found: ignore
+      - name: Update feed self-test (the released app finds and downloads itself)
+        if: startsWith(github.ref, 'refs/tags/v')
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD 'e2e/update-selftest.json'
+          $env:QUILL_UPDATE_SELFTEST = $out
+          $env:QUILL_UPDATE_SELFTEST_FROM = '0.0.1'
+          Start-Process -FilePath 'release/win-unpacked/Quill.exe' -Wait
+          Get-Content $out
+          $r = Get-Content $out | ConvertFrom-Json
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if (-not $r.ok) { throw "update check failed: $($r.error) (is the repository public?)" }
+          if (-not $r.isUpdateAvailable -or $r.latestVersion -ne $version) { throw "expected update $version, got $($r.latestVersion)" }
+          if (-not $r.downloaded) { throw 'update did not download' }

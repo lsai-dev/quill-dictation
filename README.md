@@ -79,6 +79,20 @@ npm run dist:win                # Windows installer → release/
 
 Engine builds are portable: whisper.cpp is compiled for an AVX2/FMA/F16C baseline (never `-march=native`), plus a compatibility build for processors without AVX2 that Quill selects automatically. The GitHub Actions workflow builds all three engines and the installer on `windows-latest` and uploads it as an artifact.
 
+## Releases and updates
+
+Quill updates itself. A few seconds after launch (and every few hours) it checks this repository's GitHub Releases; when a newer version exists it says so in the app, the tray and a notification, downloads **only the changed parts** of the installer when you click Download (differential updates via blockmaps), and installs on **Restart to Update** — or automatically the next time Quill quits. It never restarts mid-dictation, and your settings and voice models are left untouched.
+
+To ship a version:
+
+```bash
+npm version 0.2.0 --no-git-tag-version   # bump package.json
+# edit resources/release-notes.md          # shown on GitHub and in the in-app prompt
+git commit -am "Quill 0.2.0" && git tag v0.2.0 && git push && git push origin v0.2.0
+```
+
+The tag triggers CI to build the installer, publish the GitHub Release (installer, blockmap and `latest.yml` feed) and then self-test the live feed: the freshly built app pretends to be an older version, finds the release and downloads it. Updates need the repository (or its releases) to be public.
+
 ## Project layout
 
 ```
