@@ -28,6 +28,16 @@ describe('acceptCleanup: what faithful cleanup may do', () => {
     ok('nos vemos el martes, digo, el miércoles', 'Nos vemos el miércoles.');
   });
 
+  it('accepts a correction left as spoken, and "I mean" used as a filler', () => {
+    ok('send it to John, sorry, to Jane', 'Send it to John, sorry, to Jane.');
+    ok('that was, I mean, really good', 'That was really good.');
+    ok('the red one, no wait, the blue one', 'The blue one.');
+  });
+
+  it('treats Spanish spelling variants of "and" and "or" as the same word', () => {
+    ok('vinieron juan y ignacio', 'Vinieron Juan e Ignacio.');
+  });
+
   it('fixes punctuation, capitals and accents', () => {
     ok('what time is it in tokyo', 'What time is it in Tokyo?');
     ok('creo que esta bien pero no estoy seguro', 'Creo que está bien, pero no estoy seguro.');
@@ -49,6 +59,8 @@ describe('acceptCleanup: what faithful cleanup may do', () => {
   it('keeps numbers in either form', () => {
     ok('we need twenty five chairs', 'We need 25 chairs.');
     ok('it costs 4.50 dollars', 'It costs 4.50 dollars.');
+    ok('son dieciséis personas', 'Son 16 personas.');
+    ok('call the constructor twice', 'Call the constructor twice.');
   });
 });
 
@@ -67,6 +79,17 @@ describe('acceptCleanup: what it must never let through', () => {
     expect(rejected("I don't want the blue one", 'I want the blue one.')).toBe('negation');
     expect(rejected('the build is passing', 'The build is not passing.')).toBe('negation');
     expect(rejected('no creo que funcione', 'Creo que funcione.')).toBe('negation');
+  });
+
+  it('corrections merged into both versions', () => {
+    // Seen in CI: a small model turned a correction into a list.
+    expect(rejected('Mándale el contrato a Pedro, perdón, a Pablo antes del viernes.', 'Mándale el contrato a Pedro y a Pablo antes del viernes.')).toBe('added');
+    expect(rejected('Send the invoice to John, sorry, to Jane by Friday.', 'Send the invoice to John and Jane by Friday.')).toBe('added');
+    expect(rejected('The flight leaves on Tuesday, I mean Wednesday morning.', 'The flight leaves on Tuesday or Wednesday morning.')).toBe('added');
+    // Dropping only the cue leaves both names standing.
+    expect(rejected('Send the invoice to John, sorry, to Jane by Friday.', 'Send the invoice to John, to Jane by Friday.')).toBe('correction');
+    expect(rejected('book a table for five, actually no, six people', 'Book a table for 5, 6 people.')).toBe('correction');
+    expect(rejected('nos vemos el martes, digo, el miércoles', 'Nos vemos el martes, el miércoles.')).toBe('correction');
   });
 
   it('invented or changed numbers', () => {

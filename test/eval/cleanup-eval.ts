@@ -93,6 +93,7 @@ function check(c: EvalCase, final: string): string[] {
 }
 
 const norm = (s: string) => s.replace(/[’]/g, "'").replace(/\s+/g, ' ').trim();
+const plain = (s: string) => s.toLowerCase().replace(/[^\p{L}\p{N}\s]/gu, ' ').replace(/\s+/g, ' ').trim();
 
 async function evaluate(m: CleanupModelSpec) {
   const path = await fetchModel(m);
@@ -115,12 +116,14 @@ async function evaluate(m: CleanupModelSpec) {
     const violations = check(c, final);
     // Unsafe means the cleanup did the damage: it lost something the speaker said, or
     // added something they didn't. A rule the spoken text already broke (an unresolved
-    // correction left as spoken) is a missed polish, never a safety problem.
+    // correction left as spoken) is a missed polish, never a safety problem — unless the
+    // cue is gone, which leaves both versions standing as if the speaker meant them.
     const before = new Set(check(c, c.input));
     const introduced = violations.filter((v) => !before.has(v));
+    const merged = c.cue !== undefined && violations.length > 0 && !` ${plain(final)} `.includes(` ${plain(c.cue)} `);
     let status: Status;
     if (!verdict.ok) status = violations.length ? 'missed' : 'kept';
-    else if (introduced.length) status = 'UNSAFE';
+    else if (introduced.length || merged) status = 'UNSAFE';
     else if (violations.length) status = 'missed';
     else status = verdict.changed ? 'polished' : 'unchanged';
     results.push({

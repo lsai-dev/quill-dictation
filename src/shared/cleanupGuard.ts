@@ -22,6 +22,7 @@ export interface GuardResult {
     | 'dropped'
     | 'number'
     | 'negation'
+    | 'correction'
     | 'term'
     | 'language'
     | 'runaway';
@@ -77,12 +78,23 @@ function collapseRepeats(words: string[]): string[] {
 const CORRECTION_CUE =
   /,\s*(?:sorry|perdón|perdon)\s*,|\b(?:no,? wait|wait,? no|no,? sorry|sorry,? no|i mean|scratch that|actually,? no|or rather|let me rephrase|correction|no,? espera|espera,? no|perdón|perdon|digo|mejor dicho|quiero decir|o sea,? no|no,? no)\b/i;
 
+/**
+ * Cues that only ever mark a correction (unlike "I mean" or "o sea", which are also
+ * fillers). When one is removed, the words it corrected must go with it.
+ */
+const STRONG_CUE =
+  /,\s*(?:sorry|perdón|perdon)\s*,|\b(?:no,? wait|wait,? no|no,? sorry|sorry,? no|scratch that|actually,? no|or rather|no,? espera|espera,? no|digo|mejor dicho)\b/gi;
+
+/** Joining words, with Spanish spelling variants ("y"/"e", "o"/"u") counted as one. */
+const CONNECTIVES: Record<string, string> = Object.assign(Object.create(null), { and: 'and', or: 'or', but: 'but', nor: 'nor', y: 'y', e: 'y', o: 'o', u: 'o', pero: 'pero', ni: 'ni', sino: 'sino' });
+
 const NEGATIONS = /\b(?:not|no|never|nothing|nobody|none|nowhere|neither|nor|without|nunca|nada|nadie|ningun[oa]?|ningún|tampoco|ni|sin|jamás|jamas)\b/gi;
 
 const ASSISTANT_OPENERS =
   /^(?:sure|certainly|of course|absolutely|here(?:['’]s| is| are)|i(?:['’]m| am) sorry|i can(?:not|['’]t)|as an ai|great question|the answer is|claro|por supuesto|aquí (?:está|tienes)|lo siento|no puedo)\b/i;
 
-const NUMBER_WORDS: Record<string, number> = {
+// Prototype-free, so words like "constructor" are not looked up on Object.
+const NUMBER_WORDS: Record<string, number> = Object.assign(Object.create(null), {
   zero: 0, one: 1, two: 2, three: 3, four: 4, five: 5, six: 6, seven: 7, eight: 8, nine: 9, ten: 10,
   eleven: 11, twelve: 12, thirteen: 13, fourteen: 14, fifteen: 15, sixteen: 16, seventeen: 17, eighteen: 18, nineteen: 19,
   twenty: 20, thirty: 30, forty: 40, fifty: 50, sixty: 60, seventy: 70, eighty: 80, ninety: 90,
@@ -91,9 +103,11 @@ const NUMBER_WORDS: Record<string, number> = {
   once: 11, doce: 12, trece: 13, catorce: 14, quince: 15, dieciséis: 16, diecisiete: 17, dieciocho: 18, diecinueve: 19,
   veinte: 20, treinta: 30, cuarenta: 40, cincuenta: 50, sesenta: 60, setenta: 70, ochenta: 80, noventa: 90,
   cien: 100, ciento: 100, mil: 1000, millón: 1e6, primero: 1, primera: 1, segundo: 2, segunda: 2, tercero: 3, tercera: 3,
-};
+});
 
 const fold = (s: string) => s.normalize('NFD').replace(/\p{M}+/gu, '').toLowerCase();
+// Words are compared accent-folded ("dieciséis" → "dieciseis").
+for (const k of Object.keys(NUMBER_WORDS)) NUMBER_WORDS[fold(k)] = NUMBER_WORDS[k];
 
 function canonicalWords(text: string): string[] {
   let t = text.toLowerCase().replace(/[’]/g, "'");
@@ -224,6 +238,9 @@ export function acceptCleanup(original: string, output: string): GuardResult {
   const unexplained = novel.filter((w) => w.length > 3 && !inWords.some((x) => editDistance(x, w) <= (w.length > 6 ? 2 : 1)));
   if (unexplained.length || novel.length > Math.max(1, Math.floor(outWords.length * 0.06))) return reject('added');
   if (outWords.length > inWords.length + Math.max(2, Math.ceil(inWords.length * 0.08))) return reject('added');
+  // A new "and" or "or" changes meaning: "to John, sorry, to Jane" is not "to John and Jane".
+  const joins = tally(inWords.map((w) => CONNECTIVES[w]).filter(Boolean));
+  for (const [k, n] of tally(outWords.map((w) => CONNECTIVES[w]).filter(Boolean))) if (n > (joins.get(k) ?? 0)) return reject('added');
 
   // Numbers: never invented.
   const inNums = numbersIn(original);
@@ -235,6 +252,10 @@ export function acceptCleanup(original: string, output: string): GuardResult {
   const negOut = negations(text);
   if (negOut < negations(original.replace(new RegExp(CORRECTION_CUE.source, 'gi'), ' ')) - (corrected ? 1 : 0)) return reject('negation');
   if (negOut > negations(original)) return reject('negation');
+
+  // A correction is either left as spoken or resolved; dropping the cue alone would
+  // leave both versions standing as if the speaker meant them.
+  if (unresolvedCorrection(original, outWords)) return reject('correction');
 
   // Identifiers and acronyms: kept verbatim.
   const terms = protectedTerms(original);
@@ -259,6 +280,38 @@ export function acceptCleanup(original: string, output: string): GuardResult {
   if (orderScore(inWords, outWords) < 0.85) return reject('rewritten');
 
   return { ok: true, text, changed: true };
+}
+
+function tally(items: string[]): Map<string, number> {
+  const m = new Map<string, number>();
+  for (const x of items) m.set(x, (m.get(x) ?? 0) + 1);
+  return m;
+}
+
+/** How many times a word sequence occurs in a word list. */
+function occurrences(words: string[], seq: string[]): number {
+  let n = 0;
+  for (let i = 0; i + seq.length <= words.length; i++) if (seq.every((w, k) => words[i + k] === w)) n++;
+  return n;
+}
+
+/**
+ * True when the output dropped a correction cue ("sorry", "no wait", "digo") but kept
+ * the word the speaker was correcting — the last one before the cue.
+ */
+function unresolvedCorrection(original: string, outWords: string[]): boolean {
+  const inWords = canonicalWords(original);
+  const asValue = (w: string) => (isNumberWord(w) ? String(NUMBER_WORDS[w] ?? spanishCompound(w)) : w);
+  const outValues = outWords.map(asValue);
+  const inValues = inWords.map(asValue);
+  for (const m of original.matchAll(STRONG_CUE)) {
+    const cue = canonicalWords(m[0]);
+    if (!cue.length || occurrences(outWords, cue) >= occurrences(inWords, cue)) continue;
+    const before = canonicalWords(original.slice(0, m.index)).filter((w) => !HESITATIONS.has(w));
+    const corrected = before.length ? asValue(before[before.length - 1]) : null;
+    if (corrected && occurrences(outValues, [corrected]) >= occurrences(inValues, [corrected])) return true;
+  }
+  return false;
 }
 
 /** Fraction of output words that appear in the input in increasing order (longest common subsequence). */

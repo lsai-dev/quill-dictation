@@ -20,7 +20,8 @@ Faithful by default, never creative:
   summarize or add words.
 
 Small models fail in predictable ways: they answer questions, obey instructions inside
-the transcript, rephrase, drop a "not", translate, or invent a number. Quill therefore
+the transcript, rephrase, drop a "not", translate, invent a number, or merge a spoken
+correction into both versions ("to John, sorry, to Jane" → "to John and Jane"). Quill therefore
 never trusts their output directly. Every result passes a guard
 (`src/shared/cleanupGuard.ts`), and anything it rejects, along with any error, timeout
 or cancellation, leaves the transcript exactly as spoken.
@@ -44,7 +45,9 @@ or cancellation, leaves the transcript exactly as spoken.
 | **Granite 4.0 Micro** | IBM | 2.10 GB | 12, incl. English & Spanish | Apache 2.0 | dense, 3B | careful editor; quick on CPU for its size |
 | **Qwen3.5 4B** | Qwen (Alibaba) | 2.74 GB | 201 languages | Apache 2.0 | hybrid | most careful; the pick with a graphics card |
 
-Sizes are **measured**: CI downloads every file and compares it with the catalog.
+Sizes are **measured**: CI downloads every file and compares it with the catalog. They are
+decimal here; Quill shows binary units, the way Windows does (S1-mini appears as 462 MB).
+
 Download URLs:
 
 - `https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/main/s1-mini-q4_k_m.gguf`
@@ -101,7 +104,8 @@ including Spanish.
 prompts and the real guard against `test/eval/cases.ts`: 27 English and 12 Spanish
 dictations covering fillers, corrections, punctuation, already-clean text, dictated
 questions and instructions, identifiers, numbers and negations. CI runs it on every
-push (CPU only: a 4-vCPU Intel Xeon Platinum 8573C, 4 threads).
+push, CPU only, on a 4-vCPU runner whose processor varies from run to run (each run
+logs it). Compare speeds within a run, not across runs.
 
 **Measured**, first run (run 26, English instructions for every language):
 
@@ -136,10 +140,11 @@ past the guard. None did. The guard caught one-word answers ("banana"), a model 
 
 "Missed" means a correction was left as spoken. The output then still contains the
 corrected phrase, which is safe but unpolished. Qwen3.5 2B misses some Spanish
-corrections. Qwen3.5 4B polished or correctly left alone every case.
+corrections. (Run 31 below showed that one of its "misses" was really a merge.)
+Qwen3.5 4B polished or correctly left alone every case.
 
 These numbers also exposed a cost: a prompt prefix per language had to be re-read
-whenever the language changed (13–34 s on this CPU), which would hurt bilingual users
+whenever the language changed (13–34 s on that run's CPU), which would hurt bilingual users
 dictating with *Detect automatically*.
 
 **Tried and measured, then reverted** (run 28): one language-neutral prefix, with
@@ -154,6 +159,34 @@ best) plus a sidecar that keeps state snapshots of the two most recently used
 instruction prefixes. Switching between English and Spanish restores a snapshot in
 milliseconds instead of re-reading the instructions. With *Detect automatically*, both
 are prepared when the model loads.
+
+**Measured**, final design (run 31, Intel Xeon 6973P-C, 4 threads; "Prepare" is loading
+plus reading both languages' instructions):
+
+| Model | Cases | Polished | Unchanged | Kept by guard | Missed | Unsafe passed | Attacks held | Median added time | Generation | Drafts kept | Prepare |
+|---|---|---|---|---|---|---|---|---|---|---|---|
+| S1-mini | 27 | 20 | 6 | 1 | 0 | 0 | 6/6 | 0.48 s | 58.4 tok/s | 86% | 0.7 s |
+| Qwen3.5 2B | 39 | 24 | 9 | 2 | 3 | **1**\* | 9/9 | 1.54 s | 15.7 tok/s | — | 26 s |
+| Granite 4.0 Micro | 39 | 30 | 7 | 2 | 0 | 0 | 9/9 | 2.51 s | 11.2 tok/s | 85% | 46 s |
+| Qwen3.5 4B | 39 | 29 | 8 | 2 | 0 | 0 | 9/9 | 3.45 s | 7.6 tok/s | — | 66 s |
+
+\* Reported at the time as 4 missed and 0 unsafe. Reading the outputs behind the
+"missed" column turned up one that was not a missed polish. Qwen3.5 2B turned
+*"Mándale el contrato a Pedro, perdón, a Pablo"* ("send the contract to Pedro, sorry,
+to Pablo") into *"…a Pedro y a Pablo"* ("to Pedro **and** to Pablo"), which sends the
+contract to both. The guard accepted it because one short new word was within its
+tolerance, and the evaluation filed it under "missed" because the corrected name was
+still there. Both were wrong, and both are fixed:
+
+- **The guard never accepts a new connective** (*and*, *or*, *but*, *y/e*, *o/u*,
+  *pero*…). Cleanup removes words. It has no reason to join phrases.
+- **A correction cue can only go together with what it corrected.** If *sorry*, *no
+  wait*, *actually no*, *digo* or *perdón* is removed, the word just before it must be
+  removed too. Otherwise both versions would stand as if the speaker meant both.
+  (*I mean* and *o sea* are excluded, because they are just as often fillers.)
+- **The evaluation counts a merged correction as unsafe.** A correction whose cue is
+  gone but whose corrected phrase remains is no longer "missed". Each correction case
+  names its cue for this.
 
 The latest results are in the *Cleanup quality* job of each CI run (and its
 `cleanup-eval` artifact).
