@@ -16,6 +16,7 @@ export interface FrameParams {
   settle: number;
   offset: [number, number, number];
   energy: Float32Array; // 32 samples
+  touch: Float32Array; // 24 × (x, y, z, twist) pointer response
   opacity: number;
   glow: number;
   edge: number;
@@ -221,6 +222,17 @@ export class RibbonRenderer {
     return [((x + 1) / 2) * this.canvas.clientWidth, ((1 - y) / 2) * this.canvas.clientHeight];
   }
 
+  /** A world → CSS px mapping for the current camera (null until the canvas has a size). */
+  projector(): ((p: number[]) => [number, number]) | null {
+    if (!this.width || !this.height) return null;
+    const { viewProj } = this.camera();
+    const w = this.canvas.clientWidth, h = this.canvas.clientHeight;
+    return (p) => {
+      const [x, y] = project(viewProj, p);
+      return [((x + 1) / 2) * w, ((1 - y) / 2) * h];
+    };
+  }
+
   render(f: FrameParams) {
     if (this.lost || this.gl.isContextLost()) return;
     try {
@@ -251,6 +263,7 @@ export class RibbonRenderer {
     ru.f('uSettle', f.settle);
     ru.v3('uOffset', f.offset);
     ru.fv('uEnergy[0]', f.energy);
+    ru.v4v('uTouch[0]', f.touch);
     ru.f('uOpacity', f.opacity);
     ru.f('uGlow', f.glow);
     ru.f('uEdge', f.edge);

@@ -38,7 +38,7 @@ export function HomeView() {
   let ribbon: AnyRibbon | null = null;
   requestAnimationFrame(() => {
     try {
-      ribbon = createRibbon(canvas, { viewHeight: 2.0, anchorY: 0.5, persistent: true });
+      ribbon = createRibbon(canvas, { viewHeight: 2.0, anchorY: 0.5, persistent: true, interactive: true });
       ribbon.setDark(matchMedia('(prefers-color-scheme: dark)').matches);
       ribbon.setReducedMotion(reducedMotion());
       onMotionChange((r) => ribbon?.setReducedMotion(r));
