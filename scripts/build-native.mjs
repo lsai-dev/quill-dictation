@@ -17,11 +17,11 @@ mkdirSync(out, { recursive: true });
 // Set QUILL_NATIVE_CPU=1 for a build tuned to this machine only.
 const portable = process.env.QUILL_NATIVE_CPU ? {} : { GGML_NATIVE: 'OFF' };
 
-const cargo = (args, targetDir) =>
+const cargo = (args, targetDir, extraEnv = {}) =>
   execFileSync('cargo', ['build', '--release', ...args], {
     cwd: native,
     stdio: 'inherit',
-    env: { ...process.env, ...portable, ...(targetDir ? { CARGO_TARGET_DIR: targetDir } : {}) },
+    env: { ...process.env, ...portable, ...extraEnv, ...(targetDir ? { CARGO_TARGET_DIR: targetDir } : {}) },
   });
 
 console.log('› Building quill-native and the CPU engine');
@@ -32,7 +32,11 @@ copyFileSync(join(native, 'target', 'release', `quill-engine${exe}`), join(out, 
 if (process.argv.includes('--vulkan')) {
   console.log('› Building the Vulkan engine');
   const dir = join(native, 'target-vulkan');
-  cargo(['-p', 'quill-engine', '--features', 'vulkan'], dir);
+  // ggml builds its shader compiler as a nested CMake project; under the Visual
+  // Studio generator that nested configure can't find the compiler. Ninja (run
+  // from an MSVC developer environment) handles both levels.
+  const generator = process.platform === 'win32' && !process.env.CMAKE_GENERATOR ? { CMAKE_GENERATOR: 'Ninja' } : {};
+  cargo(['-p', 'quill-engine', '--features', 'vulkan'], dir, generator);
   copyFileSync(join(dir, 'release', `quill-engine${exe}`), join(out, `quill-engine-vulkan${exe}`));
 }
 

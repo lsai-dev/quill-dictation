@@ -41,6 +41,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
+      - name: MSVC developer environment (cl + ninja on PATH)
+        uses: ilammy/msvc-dev-cmd@v1
       - name: Install Vulkan SDK (for the GPU engine)
         uses: jakoch/install-vulkan-sdk-action@v1
         with:
