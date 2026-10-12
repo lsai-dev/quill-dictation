@@ -3,7 +3,7 @@ import { ModelsView } from './views/models';
 import { SettingsView } from './views/settings';
 import { Onboarding } from './views/onboarding';
 import { api, initStore, snapshot, subscribe } from './store';
-import { navigate, onNavigate, Section } from './router';
+import { navigate, onNavigate, type Section } from './router';
 import { h, icons, keycaps, svg } from './ui';
 
 const params = new URLSearchParams(location.search);
@@ -24,7 +24,25 @@ export const BRAND_MARK = `<svg viewBox="0 0 48 24" aria-hidden="true">
 async function boot() {
   await initStore();
   const root = document.getElementById('root')!;
+  const first = (params.get('section') as Section) || 'home';
 
+  // First run is its own space: the app isn't built until setup is finished, so
+  // nothing of it can show behind (or through) the introduction.
+  if (!snapshot().settings.onboarded) {
+    document.body.classList.add('onboarding-open');
+    root.append(
+      Onboarding({
+        // Built a beat before the introduction leaves, so the hand-off is a cross-fade.
+        prepare: () => mountApp(root, 'home', true),
+        done: () => document.body.classList.remove('onboarding-open'),
+      }),
+    );
+    return;
+  }
+  mountApp(root, first, false);
+}
+
+function mountApp(root: HTMLElement, section: Section, reveal: boolean) {
   const views: Record<Section, HTMLElement> = {
     home: HomeView(),
     models: ModelsView(),
@@ -43,16 +61,23 @@ async function boot() {
     nav,
     foot,
   );
-  root.append(h('div', { class: 'titlebar', 'aria-hidden': 'true' }), h('div', { class: 'app' }, sidebar, content));
+  const shell = h('div', { class: `app ${reveal ? 'revealing' : ''}` }, sidebar, content);
+  root.prepend(h('div', { class: 'titlebar', 'aria-hidden': 'true' }), shell);
+  if (reveal) requestAnimationFrame(() => requestAnimationFrame(() => shell.classList.remove('revealing')));
 
   const show = (s: Section) => {
     for (const [k, v] of Object.entries(views)) v.classList.toggle('active', k === s);
-    nav.querySelectorAll('.nav-item').forEach((b) => b.classList.toggle('active', (b as HTMLElement).dataset.section === s));
+    nav.querySelectorAll('.nav-item').forEach((b) => {
+      const on = (b as HTMLElement).dataset.section === s;
+      b.classList.toggle('active', on);
+      if (on) b.setAttribute('aria-current', 'page');
+      else b.removeAttribute('aria-current');
+    });
     content.scrollTop = 0;
   };
   onNavigate(show);
   api.onNavigate((s) => navigate(s as Section));
-  navigate((params.get('section') as Section) || 'home');
+  navigate(section);
 
   let footKey = '';
   subscribe((s) => {
@@ -60,15 +85,6 @@ async function boot() {
     footKey = s.settings.hotkey;
     foot.replaceChildren(h('div', { class: 'foot-label' }, 'Dictate anywhere'), keycaps(s.settings.hotkey));
   });
-
-  const s = snapshot();
-  if (!s.settings.onboarded) {
-    document.body.classList.add('onboarding-open');
-    root.append(Onboarding(() => {
-      document.body.classList.remove('onboarding-open');
-      navigate('home');
-    }));
-  }
 }
 
 void boot();

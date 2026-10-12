@@ -65,7 +65,9 @@ h1, h2, h3, p { margin: 0; }
 .titlebar { position: fixed; inset: 0 0 auto 0; height: 44px; -webkit-app-region: drag; z-index: 5; }
 button, select, textarea, input, a, .nav, .seg { -webkit-app-region: no-drag; }
 
-.app { display: grid; grid-template-columns: 224px 1fr; height: 100vh; }
+.app { display: grid; grid-template-columns: 224px 1fr; height: 100vh; transition: opacity 560ms var(--ease) 80ms, transform 760ms var(--spring) 80ms; }
+/* After first-run setup the app arrives as one piece, beneath the departing introduction. */
+.app.revealing { opacity: 0; transform: scale(0.985); transition: none; }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 .sidebar {
@@ -366,7 +368,9 @@ html[data-platform="darwin"] .sidebar { padding-top: 56px; }
 }
 /* Busier steps lift the ribbon out of the way — the same object, moving. */
 .onboarding[data-step="1"], .onboarding[data-step="3"] { grid-template-rows: 27% 1fr auto; }
+/* Over Mica the introduction is the only thing in the window — the backdrop shows, never the app. */
 html[data-mica="on"] .onboarding { background: color-mix(in srgb, var(--surface-2) 72%, transparent); }
+body.onboarding-open { background: var(--bg); }
 .onboarding.done { opacity: 0; transform: scale(1.02); pointer-events: none; }
 .ob-drag { position: absolute; inset: 0 0 auto 0; height: 44px; -webkit-app-region: drag; }
 .ob-stage { position: relative; }

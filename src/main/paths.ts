@@ -19,7 +19,15 @@ export function modelsDir() {
  * development we look in resources/bin (copied by `npm run build:native`) and
  * then straight in Cargo's target directory.
  */
-export function nativeBinary(name: 'quill-native' | 'quill-engine-cpu' | 'quill-engine-compat' | 'quill-engine-vulkan'): string | null {
+export type NativeBinary =
+  | 'quill-native'
+  | 'quill-engine-cpu'
+  | 'quill-engine-compat'
+  | 'quill-engine-vulkan'
+  | 'quill-cleanup-cpu'
+  | 'quill-cleanup-vulkan';
+
+export function nativeBinary(name: NativeBinary): string | null {
   const root = app.getAppPath();
   const candidates = app.isPackaged
     ? [join(process.resourcesPath, 'bin', name + exe)]
@@ -27,6 +35,7 @@ export function nativeBinary(name: 'quill-native' | 'quill-engine-cpu' | 'quill-
         join(root, 'resources', 'bin', name + exe),
         // Cargo builds a single "quill-engine"; treat it as the CPU engine in dev.
         join(root, 'native', 'target', 'release', (name === 'quill-engine-cpu' ? 'quill-engine' : name) + exe),
+        ...(name === 'quill-cleanup-cpu' ? [join(root, 'native', 'target-cleanup', 'release', 'quill-cleanup' + exe)] : []),
       ];
   return candidates.find((c) => existsSync(c)) ?? null;
 }

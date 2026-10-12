@@ -2,6 +2,7 @@
 //   node scripts/build-native.mjs            → quill-native + CPU engine
 //   node scripts/build-native.mjs --vulkan   → also the Vulkan (GPU) engine (needs the Vulkan SDK)
 //   node scripts/build-native.mjs --compat   → also an engine for CPUs without AVX2 (older/budget PCs)
+//   node scripts/build-native.mjs --cleanup  → also the transcript-cleanup engine (with --vulkan: its GPU build too)
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join, parse } from 'node:path';
@@ -70,7 +71,30 @@ if (process.argv.includes('--compat')) {
   copyFileSync(join(dir, 'release', `quill-engine${exe}`), join(out, `quill-engine-compat${exe}`));
 }
 
-for (const f of ['quill-native', 'quill-engine-cpu', 'quill-engine-compat', 'quill-engine-vulkan']) {
+if (process.argv.includes('--cleanup')) {
+  // llama.cpp derives its CPU kernels from Rust's target features, so the cleanup
+  // engine is built for the same portable AVX2/FMA/F16C baseline as whisper.cpp (x86),
+  // in its own target directory so these flags don't invalidate the other builds.
+  // Processors without AVX2 don't get cleanup (Quill hides it there).
+  const x86 = process.arch === 'x64' || process.arch === 'ia32';
+  const rustflags = x86 && !process.env.QUILL_NATIVE_CPU ? { RUSTFLAGS: '-C target-feature=+avx,+avx2,+fma,+f16c,+bmi2' } : {};
+  const build = (label, dir, features, bin) => {
+    console.log(`› Building the ${label}`);
+    execFileSync('cargo', ['build', '--release', '-p', 'quill-cleanup', ...features], {
+      cwd: native,
+      stdio: 'inherit',
+      env: { ...process.env, ...windowsCmake, ...rustflags, CARGO_TARGET_DIR: dir, GGML_NATIVE: 'OFF' },
+    });
+    copyFileSync(join(dir, 'release', `quill-cleanup${exe}`), join(out, `${bin}${exe}`));
+  };
+  build('cleanup engine (CPU)', join(native, 'target-cleanup'), [], 'quill-cleanup-cpu');
+  if (process.argv.includes('--vulkan')) {
+    const dir = process.env.QUILL_VULKAN_CLEANUP_TARGET_DIR ?? (process.platform === 'win32' ? join(parse(native).root, 'qc') : join(native, 'target-cleanup-vulkan'));
+    build('cleanup engine (Vulkan)', dir, ['--features', 'vulkan'], 'quill-cleanup-vulkan');
+  }
+}
+
+for (const f of ['quill-native', 'quill-engine-cpu', 'quill-engine-compat', 'quill-engine-vulkan', 'quill-cleanup-cpu', 'quill-cleanup-vulkan']) {
   const p = join(out, f + exe);
   console.log(`  ${existsSync(p) ? '✓' : '·'} ${f}${exe}`);
 }

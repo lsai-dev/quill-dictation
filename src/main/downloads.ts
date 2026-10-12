@@ -3,10 +3,37 @@ import { createHash } from 'node:crypto';
 import { EventEmitter } from 'node:events';
 import { createReadStream, createWriteStream, existsSync, renameSync, statSync, unlinkSync } from 'node:fs';
 import { join } from 'node:path';
+import { CLEANUP_MODELS, cleanupModelById, cleanupModelUrl } from '../shared/cleanupModels';
 import { modelById, modelUrl, MODELS } from '../shared/models';
 import type { DownloadProgress, ModelState } from '../shared/types';
 import { modelsDir } from './paths';
 import { log } from './log';
+
+/** Thrown by `download` when the download was cancelled. */
+export class DownloadCancelled extends Error {
+  constructor() {
+    super('Download cancelled');
+    this.name = 'DownloadCancelled';
+  }
+}
+
+interface Downloadable {
+  file: string;
+  url: string;
+  sizeBytes: number;
+  /** Fraction of the catalog size a file must reach to count as installed. */
+  minFraction: number;
+}
+
+/** Dictation (whisper) and cleanup (GGUF) models share one folder and one downloader. */
+function downloadable(id: string): Downloadable | undefined {
+  const w = modelById(id);
+  if (w) return { file: w.file, url: modelUrl(w), sizeBytes: w.sizeBytes, minFraction: 0.9 };
+  const c = cleanupModelById(id);
+  // Cleanup sizes in the catalog are approximate; the download itself is verified exactly.
+  if (c) return { file: c.file, url: cleanupModelUrl(c), sizeBytes: c.sizeBytes, minFraction: 0.5 };
+  return undefined;
+}
 
 /**
  * Model downloads: resumable (HTTP Range into a .partial file), verified
@@ -15,34 +42,51 @@ import { log } from './log';
  */
 export class Downloads extends EventEmitter {
   private active = new Map<string, { controller: AbortController; progress: DownloadProgress }>();
+  /** The last failure per model, kept (with how far it got) until it's retried or dismissed. */
+  private failed = new Map<string, DownloadProgress>();
 
   pathFor(modelId: string): string | null {
-    const m = modelById(modelId);
+    const m = downloadable(modelId);
     return m ? join(modelsDir(), m.file) : null;
   }
 
   isInstalled(modelId: string): boolean {
     const p = this.pathFor(modelId);
-    const m = modelById(modelId);
+    const m = downloadable(modelId);
     if (!p || !m || !existsSync(p)) return false;
     // Guard against truncated files from older interrupted copies.
-    return statSync(p).size > m.sizeBytes * 0.9;
+    return statSync(p).size > m.sizeBytes * m.minFraction;
   }
 
   states(): ModelState[] {
-    return MODELS.map((m) => ({ id: m.id, installed: this.isInstalled(m.id), path: this.isInstalled(m.id) ? this.pathFor(m.id) : null }));
+    return [...MODELS, ...CLEANUP_MODELS].map((m) => {
+      const installed = this.isInstalled(m.id);
+      const partial = installed ? null : this.pathFor(m.id) + '.partial';
+      const partialBytes = partial && existsSync(partial) ? statSync(partial).size : 0;
+      return { id: m.id, installed, path: installed ? this.pathFor(m.id) : null, ...(partialBytes ? { partialBytes } : {}) };
+    });
+  }
+
+  isDownloading(modelId?: string): boolean {
+    return modelId ? this.active.has(modelId) : this.active.size > 0;
   }
 
   progress(): DownloadProgress[] {
-    return [...this.active.values()].map((a) => a.progress);
+    return [...[...this.active.values()].map((a) => a.progress), ...this.failed.values()];
   }
 
   cancel(modelId: string) {
+    this.failed.delete(modelId);
     this.active.get(modelId)?.controller.abort();
+  }
+
+  dismiss(modelId: string) {
+    if (this.failed.delete(modelId)) this.emit('progress', null);
   }
 
   remove(modelId: string) {
     this.cancel(modelId);
+    this.failed.delete(modelId);
     const p = this.pathFor(modelId);
     for (const f of [p, p && p + '.partial']) {
       if (f && existsSync(f)) {
@@ -56,12 +100,13 @@ export class Downloads extends EventEmitter {
   }
 
   async download(modelId: string): Promise<string> {
-    const m = modelById(modelId);
+    const m = downloadable(modelId);
     if (!m) throw new Error(`Unknown model ${modelId}`);
     const dest = this.pathFor(modelId)!;
     if (this.isInstalled(modelId)) return dest;
     if (this.active.has(modelId)) throw new Error('Already downloading');
 
+    this.failed.delete(modelId);
     const controller = new AbortController();
     const progress: DownloadProgress = { modelId, received: 0, total: m.sizeBytes, bytesPerSec: 0, state: 'downloading' };
     this.active.set(modelId, { controller, progress });
@@ -70,7 +115,7 @@ export class Downloads extends EventEmitter {
 
     const partial = dest + '.partial';
     try {
-      const url = modelUrl(m);
+      const url = m.url;
       const { sha256, size } = await this.probe(url, controller.signal);
       if (size) progress.total = size;
 
@@ -136,8 +181,10 @@ export class Downloads extends EventEmitter {
       progress.state = aborted ? 'cancelled' : 'error';
       progress.error = aborted ? undefined : friendly(e as Error);
       emit();
-      if (!aborted) log.error(`download ${modelId}: ${(e as Error).message}`);
-      throw e;
+      if (aborted) throw new DownloadCancelled();
+      this.failed.set(modelId, { ...progress, bytesPerSec: 0 });
+      log.error(`download ${modelId}: ${(e as Error).message}`);
+      throw new Error(progress.error);
     } finally {
       this.active.delete(modelId);
     }

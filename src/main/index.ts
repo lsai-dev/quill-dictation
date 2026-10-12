@@ -1,12 +1,14 @@
 import { app, clipboard, ipcMain, nativeTheme, session, shell } from 'electron';
 import { IPC } from '../shared/ipc';
+import { cleanupModelById } from '../shared/cleanupModels';
 import { modelById } from '../shared/models';
-import { recommend } from '../shared/recommend';
-import type { AppSnapshot, HardwareProfile, RecommendationSet, Settings } from '../shared/types';
+import { recommend, recommendSetup } from '../shared/recommend';
+import type { AppSnapshot, HardwareProfile, RecommendationSet, Settings, SetupRecommendation } from '../shared/types';
 import { getAppWindow, showAppWindow } from './appWindow';
 import { Dictation } from './dictation';
-import { Downloads } from './downloads';
-import { Engine } from './engine';
+import { CleanupEngine } from './cleanup';
+import { DownloadCancelled, Downloads } from './downloads';
+import { Engine, inferenceThreads } from './engine';
 import { detectHardware } from './hardware';
 import { Hotkey, label } from './hotkey';
 import { initLog, log } from './log';
@@ -49,6 +51,7 @@ async function main() {
   const native = new NativeHelper();
   await native.start();
   const engine = new Engine();
+  const cleanup = new CleanupEngine();
   const downloads = new Downloads();
   const updater = new Updater();
   const hotkey = new Hotkey(native);
@@ -56,6 +59,7 @@ async function main() {
   const overlay = new OverlayWindow();
   // The engine's thread count depends on whether the UI renders in software, so
   // the first model load waits (briefly) for the overlay to report it.
+  let softwareRendering = false;
   const rendererKnown = new Promise<void>((resolve) => {
     overlay.once('renderer', (info: { software: boolean }) => {
       engine.setSoftwareRendering(info.software);
@@ -63,11 +67,16 @@ async function main() {
     });
     setTimeout(resolve, 2000);
   });
-  overlay.on('renderer', (info: { software: boolean }) => engine.setSoftwareRendering(info.software));
+  overlay.on('renderer', (info: { software: boolean }) => {
+    softwareRendering = info.software;
+    engine.setSoftwareRendering(info.software);
+    if (hardware) cleanup.setThreads(inferenceThreads(hardware.cpu.physicalCores, softwareRendering));
+  });
   overlay.create();
 
   let hardware: HardwareProfile | null = null;
   let recs: RecommendationSet | null = null;
+  let setup: SetupRecommendation | null = null;
 
   const theme = () => {
     const m = settings.get().motion;
@@ -93,7 +102,20 @@ async function main() {
       }
       return { ok: true, modelId: s.modelId };
     },
+    cleanup: {
+      ready: () => settings.get().cleanup && cleanup.ready,
+      polish: (text, language) => cleanup.polish(text, { language, deadlineMs: cleanupDeadline(text) }),
+      cancel: () => cleanup.cancel(),
+    },
   });
+
+  /** How long a polish may take before the transcript goes in as spoken. */
+  function cleanupDeadline(text: string) {
+    const id = settings.get().cleanupModelId;
+    const est = setup?.cleanupEstimates.find((e) => e.modelId === id)?.latencySec ?? 2;
+    const words = text.split(/\s+/).filter(Boolean).length;
+    return Math.round(Math.min(60_000, Math.max(4_000, (est * Math.max(1, words / 25) * 3 + 1.5) * 1000)));
+  }
   dictation.on('needs-setup', () => showAppWindow('models'));
 
   // ── State broadcast to the app window ──────────────────────────────────────
@@ -101,8 +123,10 @@ async function main() {
     settings: settings.get(),
     hardware,
     recommendations: recs,
+    setup,
     models: downloads.states(),
     engine: engine.status,
+    cleanupEngine: cleanup.status,
     downloads: downloads.progress(),
     history: dictation.history,
     version: app.getVersion(),
@@ -136,15 +160,44 @@ async function main() {
     }
   }
 
+  /** Cleanup: loaded while it's on (and its model is here), unloaded to free memory when off. */
+  async function loadCleanup() {
+    const s = settings.get();
+    const id = s.cleanupModelId;
+    if (!s.cleanup || !id || !downloads.isInstalled(id) || !cleanup.available) {
+      if (cleanup.status.state !== 'idle') await cleanup.unload();
+      return;
+    }
+    const est = setup?.cleanupEstimates.find((e) => e.modelId === id);
+    // The engine is built for AVX2/NEON processors; never start it where it can't run.
+    if (hardware && !hardware.cpu.avx2 && !hardware.cpu.neon && est?.device !== 'gpu') return;
+    await rendererKnown;
+    try {
+      await cleanup.ensure(id, downloads.pathFor(id)!, est?.device === 'gpu' && s.engine !== 'cpu' ? 'gpu' : 'cpu');
+    } catch (e) {
+      log.error(`cleanup load: ${(e as Error).message}`);
+    }
+  }
+
+  function plan() {
+    if (!hardware) return;
+    const s = settings.get();
+    recs = recommend(hardware, s.language, s.engine);
+    const chosen = s.modelId && downloads.isInstalled(s.modelId) ? s.modelId : null;
+    setup = recommendSetup(hardware, s.language, s.engine, { dictationId: chosen, recs });
+  }
+
   async function refreshHardware() {
     hardware = await detectHardware(native.available ? native : null, engine.hasGpuBuild());
     engine.setCpuFeatures({ avx2: hardware.cpu.avx2 || hardware.cpu.neon, physicalCores: hardware.cpu.physicalCores });
-    recs = recommend(hardware, settings.get().language, settings.get().engine);
-    log.info(`hardware: ${hardware.cpu.brand}, ${(hardware.totalMemory / 2 ** 30).toFixed(1)} GB, gpus=[${hardware.gpus.map((g) => g.name).join(', ')}], vulkan=${hardware.vulkan} → ${recs.recommended.modelId} on ${recs.device}`);
+    cleanup.setThreads(inferenceThreads(hardware.cpu.physicalCores, softwareRendering));
+    plan();
+    log.info(`hardware: ${hardware.cpu.brand}, ${(hardware.totalMemory / 2 ** 30).toFixed(1)} GB, gpus=[${hardware.gpus.map((g) => g.name).join(', ')}], vulkan=${hardware.vulkan} → ${recs!.recommended.modelId} on ${recs!.device}; cleanup ${setup!.cleanupId ?? 'none'}${setup!.cleanup ? ` on ${setup!.cleanup.device}` : ''}`);
     broadcast();
   }
 
   engine.on('status', broadcast);
+  cleanup.on('status', broadcast);
   updater.on('status', broadcast);
   updater.isBusy = () => dictation.busy;
   updater.onOpenApp = () => showAppWindow('home');
@@ -157,10 +210,9 @@ async function main() {
   });
   settings.on('change', async (next: Settings, prev: Settings) => {
     if (next.hotkey !== prev.hotkey) await hotkey.apply(next.hotkey);
-    if (next.language !== prev.language || next.engine !== prev.engine) {
-      if (hardware) recs = recommend(hardware, next.language, next.engine);
-    }
+    if (next.language !== prev.language || next.engine !== prev.engine || next.modelId !== prev.modelId) plan();
     if (next.modelId !== prev.modelId || next.engine !== prev.engine) void loadModel();
+    if (next.cleanup !== prev.cleanup || next.cleanupModelId !== prev.cleanupModelId || next.engine !== prev.engine) void loadCleanup();
     if (next.launchAtLogin !== prev.launchAtLogin) applyLoginItem(next.launchAtLogin);
     if (next.motion !== prev.motion) overlay.send({ type: 'theme', ...theme() });
     broadcast();
@@ -173,31 +225,73 @@ async function main() {
   // ── IPC from the app window ───────────────────────────────────────────────
   ipcMain.handle(IPC.snapshot, () => snapshot());
   ipcMain.handle(IPC.setSettings, (_e, patch: Partial<Settings>) => settings.update(patch));
-  ipcMain.handle(IPC.downloadModel, async (_e, id: string) => {
-    try {
-      await downloads.download(id);
-      // First model? Use it right away — it should just work.
-      const s = settings.get();
-      if (!s.modelId || !downloads.isInstalled(s.modelId)) settings.update({ modelId: id });
-      broadcast();
-      return { ok: true };
-    } catch (e) {
-      broadcast();
-      return { ok: false, error: (e as Error).message };
+  /** After a download: a first model of either kind is put to use right away — it should just work. */
+  function adopt(id: string) {
+    const s = settings.get();
+    if (modelById(id) && (!s.modelId || !downloads.isInstalled(s.modelId))) settings.update({ modelId: id });
+    if (cleanupModelById(id) && (!s.cleanupModelId || !downloads.isInstalled(s.cleanupModelId) || s.cleanupModelId === id)) {
+      settings.update({ cleanupModelId: id, cleanup: true });
     }
+  }
+
+  // A setup (dictation, then cleanup) downloads one model at a time; cancelling one stops the rest.
+  let queueGeneration = 0;
+  async function downloadAll(ids: string[]): Promise<{ ok: boolean; error?: string; cancelled?: boolean }> {
+    const gen = ++queueGeneration;
+    for (const id of ids) {
+      if (gen !== queueGeneration) return { ok: false, cancelled: true };
+      if (downloads.isInstalled(id)) {
+        adopt(id);
+        continue;
+      }
+      try {
+        await downloads.download(id);
+        adopt(id);
+        broadcast();
+      } catch (e) {
+        broadcast();
+        if (e instanceof DownloadCancelled) return { ok: false, cancelled: true };
+        return { ok: false, error: (e as Error).message };
+      }
+    }
+    return { ok: true };
+  }
+
+  ipcMain.handle(IPC.downloadModel, (_e, id: string) => downloadAll([String(id)]));
+  ipcMain.handle(IPC.downloadModels, (_e, ids: string[]) => downloadAll((Array.isArray(ids) ? ids : []).map(String).slice(0, 4)));
+  ipcMain.handle(IPC.cancelDownload, (_e, id: string) => {
+    queueGeneration++;
+    downloads.cancel(id);
   });
-  ipcMain.handle(IPC.cancelDownload, (_e, id: string) => downloads.cancel(id));
+  ipcMain.handle(IPC.dismissDownload, (_e, id: string) => downloads.dismiss(String(id)));
   ipcMain.handle(IPC.deleteModel, async (_e, id: string) => {
+    if (cleanupModelById(id)) {
+      if (cleanup.modelId === id) await cleanup.unload();
+      downloads.remove(id);
+      if (settings.get().cleanupModelId === id) {
+        const other = downloads.states().find((m) => m.installed && cleanupModelById(m.id));
+        settings.update({ cleanupModelId: other?.id ?? null, ...(other ? {} : { cleanup: false }) });
+      }
+      broadcast();
+      return;
+    }
     if (engine.modelId === id) await engine.unload();
     downloads.remove(id);
     if (settings.get().modelId === id) {
-      const other = downloads.states().find((m) => m.installed);
+      const other = downloads.states().find((m) => m.installed && modelById(m.id));
       settings.update({ modelId: other?.id ?? null });
     }
     broadcast();
   });
   ipcMain.handle(IPC.useModel, (_e, id: string) => {
-    if (downloads.isInstalled(id)) settings.update({ modelId: id });
+    if (modelById(id) && downloads.isInstalled(id)) settings.update({ modelId: id });
+  });
+  ipcMain.handle(IPC.useCleanupModel, (_e, id: string) => {
+    if (cleanupModelById(id) && downloads.isInstalled(id)) settings.update({ cleanupModelId: id, cleanup: true });
+  });
+  ipcMain.handle(IPC.retryModels, async () => {
+    await Promise.allSettled([loadModel(), loadCleanup()]);
+    return snapshot();
   });
   ipcMain.handle(IPC.refreshHardware, async () => {
     await refreshHardware();
@@ -231,8 +325,11 @@ async function main() {
       return { label: 'Check for Updates…', click: () => void updater.check(true) };
     },
     modelLabel: () => {
-      const m = modelById(engine.modelId ?? settings.get().modelId);
-      return m ? `Model: ${m.name}` : 'No model selected';
+      const s = settings.get();
+      const m = modelById(engine.modelId ?? s.modelId);
+      const c = s.cleanup ? cleanupModelById(cleanup.modelId ?? s.cleanupModelId) : undefined;
+      if (!m) return 'No model selected';
+      return c ? `Dictation: ${m.name} · Cleanup: ${c.name}` : `Dictation: ${m.name}`;
     },
   });
 
@@ -244,15 +341,17 @@ async function main() {
     updater.stop();
     void native.stop();
     void engine.unload();
+    void cleanup.unload();
     overlay.destroy();
   });
 
   // End-to-end tests drive the real pipeline through this handle (never set in normal use).
-  if (process.env.QUILL_E2E) (globalThis as Record<string, unknown>).__quill = { dictation, engine, settings, downloads, hotkey, native, hardware: () => ({ hardware, recs }) };
+  if (process.env.QUILL_E2E) (globalThis as Record<string, unknown>).__quill = { dictation, engine, cleanup, settings, downloads, hotkey, native, hardware: () => ({ hardware, recs, setup }) };
 
   applyLoginItem(settings.get().launchAtLogin);
   await refreshHardware();
   void loadModel();
+  void loadCleanup();
   updater.start();
 
   const s = settings.get();

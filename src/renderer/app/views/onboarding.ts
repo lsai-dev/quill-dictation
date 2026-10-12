@@ -9,7 +9,7 @@ import { h, icons, keycaps, ring, svg } from '../ui';
  * First run. Four calm steps: hello → tuned to your PC → your voice → try it.
  * The ribbon is present throughout — the same object, changing with each step.
  */
-export function Onboarding(onDone: () => void) {
+export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
   const canvas = h('canvas', { class: 'ob-canvas', 'aria-hidden': 'true' });
   const stage = h('div', { class: 'ob-stage' }, canvas);
   const content = h('div', { class: 'ob-content' });
@@ -55,13 +55,14 @@ export function Onboarding(onDone: () => void) {
     micStop?.();
     unsub?.();
     void api.setSettings({ onboarded: true });
-    el.classList.add('done');
     ribbon?.success();
+    hooks.prepare();
+    el.classList.add('done');
     setTimeout(() => {
       ribbon?.dispose();
       ribbon = null;
       el.remove();
-      onDone();
+      hooks.done();
     }, 700);
   }
 

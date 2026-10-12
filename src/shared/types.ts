@@ -22,6 +22,8 @@ export interface Settings {
   launchAtLogin: boolean;
   onboarded: boolean;
   customVocabulary: string;     // biases recognition toward names and jargon
+  cleanup: boolean;             // polish transcripts with a local language model
+  cleanupModelId: string | null;
 }
 
 export const DEFAULT_SETTINGS: Settings = {
@@ -40,6 +42,8 @@ export const DEFAULT_SETTINGS: Settings = {
   launchAtLogin: true,
   onboarded: false,
   customVocabulary: '',
+  cleanup: false,
+  cleanupModelId: null,
 };
 
 export interface CpuInfo {
@@ -89,6 +93,53 @@ export interface ModelSpec {
   blurb: string;
 }
 
+/** How a cleanup model expects its prompt (each is spelled out in shared/cleanupPrompt.ts). */
+export type PromptFormat = 's1' | 'qwen' | 'granite';
+
+export interface CleanupModelSpec {
+  id: string;
+  name: string;                 // "Granite 4.0 Micro"
+  maker: string;                // "IBM"
+  params: number;               // parameter count
+  /** Hybrid (recurrent) models can't rewind, so Quill can't draft ahead for them. */
+  architecture: 'dense' | 'hybrid';
+  format: PromptFormat;
+  languages: string[] | 'all';  // ISO codes it handles well
+  license: string;
+  licenseUrl: string;
+  repo: string;                 // Hugging Face repository
+  file: string;                 // GGUF file name
+  sizeBytes: number;            // download size
+  memoryBytes: number;          // approximate working set when loaded
+  quality: number;              // 0–100, relative faithful-cleanup quality
+  blurb: string;
+}
+
+export interface CleanupEstimate {
+  modelId: string;
+  latencySec: number;           // added to a typical 10 s dictation
+  memoryBytes: number;
+  fits: boolean;                // fits alongside the dictation model, with headroom
+  device: 'gpu' | 'cpu';
+  rating: 'great' | 'good' | 'slow' | 'unsupported';
+  supported: boolean;           // language and processor can run it at all
+}
+
+/** Dictation and cleanup chosen together for this PC. */
+export interface SetupRecommendation {
+  dictationId: string;
+  /** null when no cleanup model runs comfortably next to the dictation model. */
+  cleanupId: string | null;
+  cleanup: CleanupEstimate | null;
+  cleanupEstimates: CleanupEstimate[];
+  /** Total time from finishing speaking to text, with cleanup on (seconds). */
+  totalLatencySec: number;
+  /** Memory both models need together, including runtimes. */
+  memoryBytes: number;
+  memoryBudget: number;
+  reason: string;               // one sentence on the cleanup choice
+}
+
 export interface ModelEstimate {
   modelId: string;
   latencySec: number;           // for a typical 10 s dictation
@@ -128,6 +179,8 @@ export interface ModelState {
   id: string;
   installed: boolean;
   path: string | null;
+  /** Bytes of an unfinished download that the next attempt resumes from. */
+  partialBytes?: number;
 }
 
 export type EngineStatus =
@@ -141,6 +194,7 @@ export type OverlayCommand =
   | { type: 'show'; reducedMotion: boolean | null; dark: boolean; sounds: boolean; microphoneId: string; hotkeyLabel: string; mode: HotkeyMode }
   | { type: 'stop' }                       // stop capturing; send audio back
   | { type: 'process' }
+  | { type: 'refine' }                     // transcript ready; the cleanup model is polishing it
   | { type: 'success'; text: string }
   | { type: 'cancel' }
   | { type: 'error'; message: string }
@@ -153,6 +207,11 @@ export interface DictationResult {
   processMs: number;
   modelId: string;
   at: number;
+  /** The transcript before cleanup, when cleanup changed it. */
+  original?: string;
+  /** What cleanup did: polished the text, kept it as is, or fell back to the original. */
+  cleanup?: 'polished' | 'unchanged' | 'fallback' | 'skipped';
+  cleanupMs?: number;
 }
 
 export type UpdateStatus =
@@ -166,8 +225,10 @@ export interface AppSnapshot {
   settings: Settings;
   hardware: HardwareProfile | null;
   recommendations: RecommendationSet | null;
+  setup: SetupRecommendation | null;
   models: ModelState[];
   engine: EngineStatus;
+  cleanupEngine: EngineStatus;
   downloads: DownloadProgress[];
   history: DictationResult[];
   version: string;
