@@ -131,10 +131,13 @@ function renderEngine(el: HTMLElement, s: AppSnapshot) {
   } else {
     text = s.models.find((x) => x.id === m.id)?.installed ? `${m.name} will load when you first dictate` : `${m.name} isn’t downloaded yet`;
   }
+  // A gentle nudge when the chosen model is slow here and a better fit exists.
+  const rec = s.recommendations?.recommended;
+  const better = m && est?.rating === 'slow' && rec && rec.modelId !== m.id ? modelById(rec.modelId) : undefined;
   el.replaceChildren(
     h('span', { class: `status-dot ${dot}`, 'aria-hidden': 'true' }),
-    h('span', { class: 'engine-text' }, text),
-    h('button', { class: 'link', type: 'button', onClick: () => navigate('models') }, 'Change Model', svg(icons.chevron, 'icon small')),
+    h('span', { class: 'engine-text' }, text, better ? h('span', { class: 'engine-hint' }, ` ${better.name} would be much faster on this PC.`) : null),
+    h('button', { class: 'link', type: 'button', onClick: () => navigate('models') }, better ? `Switch to ${better.name}` : 'Change Model', svg(icons.chevron, 'icon small')),
   );
 }
 

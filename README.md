@@ -90,6 +90,12 @@ native/          Rust sidecars
 resources/       icons (rendered from the real ribbon: `npm run icons`)
 ```
 
+## Known limitations
+
+- **Administrator windows.** Windows doesn't let a normal app's keyboard hook or synthetic input reach windows running as administrator, so Win + Space and pasting don't work while an elevated app is focused.
+- **First run needs one download.** Models aren't bundled (they're 57 MB – 3 GB); Quill downloads the one you pick, once.
+- **Win + Space is Windows-only.** On macOS and Linux Quill falls back to a standard global shortcut (press to start, press to finish).
+
 ## Privacy
 
 Speech recognition runs entirely on your device. Quill makes exactly one kind of network request: downloading a model you choose, from the whisper.cpp model repository. Recent dictations are kept in memory only and vanish when Quill quits.
