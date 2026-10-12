@@ -1,0 +1,64 @@
+name: Build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  check:
+    name: Typecheck & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Native unit tests
+        working-directory: native
+        run: cargo test -p quill-native
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+      - name: Install Vulkan SDK (for the GPU engine)
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: false
+          cache: true
+          stripdown: true
+      - name: Build native sidecars (CPU + Vulkan)
+        run: node scripts/build-native.mjs --vulkan
+      - name: Native unit tests
+        working-directory: native
+        run: cargo test -p quill-native
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Package
+        run: npm run dist:win
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Quill-Windows
+          path: release/*.exe
+          if-no-files-found: error

@@ -1,0 +1,43 @@
+appId: app.quill.dictation
+productName: Quill
+copyright: Copyright © 2026 Quill
+directories:
+  output: release
+  buildResources: resources
+files:
+  - dist/main/**
+  - dist/preload/**
+  - dist/renderer/**
+  - package.json
+asar: true
+extraResources:
+  # Native sidecars (built by `npm run build:native`).
+  - from: resources/bin
+    to: bin
+    filter: ["**/*"]
+  - from: resources
+    to: assets
+    filter: ["icon.png", "tray-*.png", "trayTemplate*.png"]
+win:
+  target:
+    - target: nsis
+      arch: [x64]
+  icon: resources/icon.png
+  artifactName: Quill-Setup-${version}.${ext}
+  requestedExecutionLevel: asInvoker
+nsis:
+  oneClick: true
+  perMachine: false
+  createDesktopShortcut: false
+  createStartMenuShortcut: true
+  shortcutName: Quill
+  runAfterFinish: true
+  deleteAppDataOnUninstall: false
+mac:
+  target: dmg
+  category: public.app-category.productivity
+  extendInfo:
+    NSMicrophoneUsageDescription: Quill listens only while you dictate, and transcribes on this Mac.
+linux:
+  target: AppImage
+  category: Utility

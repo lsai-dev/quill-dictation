@@ -1,0 +1,36 @@
+{
+  "name": "quill",
+  "productName": "Quill",
+  "version": "0.1.0",
+  "description": "Private, on-device voice dictation. Press Win+Space and speak.",
+  "license": "MIT",
+  "private": true,
+  "main": "dist/main/index.js",
+  "type": "commonjs",
+  "scripts": {
+    "postinstall": "install-electron",
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build:renderer && npm run build:main",
+    "build:renderer": "vite build",
+    "build:main": "node scripts/build-main.mjs",
+    "build:native": "node scripts/build-native.mjs",
+    "start": "electron .",
+    "playground": "vite --open /playground.html",
+    "icons": "node scripts/render-icons.mjs",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "test": "vitest run",
+    "dist:win": "npm run build && electron-builder --win --x64 --publish never",
+    "dist:dir": "npm run build && electron-builder --dir --publish never"
+  },
+  "devDependencies": {
+    "@types/node": "^22.15.0",
+    "electron": "44.7.0",
+    "electron-builder": "^26.0.12",
+    "esbuild": "^0.25.0",
+    "playwright": "1.56.1",
+    "typescript": "~5.9.3",
+    "vite": "^7.1.0",
+    "vitest": "^3.2.0"
+  },
+  "author": "Quill"
+}
