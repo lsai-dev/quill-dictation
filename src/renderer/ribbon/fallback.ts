@@ -33,8 +33,12 @@ export class FallbackRibbon {
   private curl = new Spring(0, 0.8, 0.85);
   private shake = new Spring(0, 0.16, 0.18);
   private light = new Spring(0.5, 0.5, 1);
+  // Pointer play: a passing cursor rocks and nudges the ribbon.
+  private tilt = new Spring(0, 0.7, 0.3);
+  private nudge = new Spring(0, 0.6, 0.35);
+  private untouch: (() => void) | null = null;
 
-  constructor(private canvas: HTMLCanvasElement, opts: { persistent?: boolean; anchorY?: number } = {}) {
+  constructor(private canvas: HTMLCanvasElement, opts: { persistent?: boolean; anchorY?: number; interactive?: boolean } = {}) {
     this.persistent = !!opts.persistent;
     const anchorY = opts.anchorY ?? 0.5;
     const ns = 'http://www.w3.org/2000/svg';
@@ -60,10 +64,39 @@ export class FallbackRibbon {
     canvas.parentElement?.insertBefore(this.root, canvas);
     this.group = this.root.querySelector('.fr-ribbon')!;
     this.glow = this.root.querySelector('.fr-glow')!;
+    if (opts.interactive && canvas.parentElement) this.listen(canvas.parentElement);
     const base = cy;
     this.renderer = {
       dark: 0,
       toScreen: (p: number[]) => [canvas.parentElement!.clientWidth / 2 + p[0] * 50, (base / 136) * canvas.parentElement!.clientHeight],
+    };
+  }
+
+  private listen(stage: HTMLElement) {
+    let last: { x: number; y: number; t: number } | null = null;
+    const move = (e: PointerEvent) => {
+      const r = this.root.getBoundingClientRect();
+      const k = 300 / Math.max(1, Math.min(r.width, (r.height * 300) / 136)); // px → viewBox units
+      const x = (e.clientX - r.left - r.width / 2) * k;
+      const y = (e.clientY - r.top - r.height / 2) * k + 68 - this.cy;
+      const t = e.timeStamp / 1000;
+      if (last && t > last.t && t - last.t < 0.1 && !this.reduced && Math.abs(x) < 95 && Math.abs(y) < 40) {
+        const vy = (y - last.y) / (t - last.t);
+        const vx = (x - last.x) / (t - last.t);
+        const near = 1 - Math.abs(y) / 40;
+        // Push one end and the ribbon rocks about its middle; push it bodily and it bobs.
+        this.tilt.impulse(clamp(vy * x * 0.004 * near, -120, 120) - clamp(vx * y * 0.003 * near, -60, 60));
+        this.nudge.impulse(clamp(vy * 0.06 * near, -60, 60));
+        this.start();
+      }
+      last = { x, y, t };
+    };
+    const leave = () => (last = null);
+    stage.addEventListener('pointermove', move);
+    stage.addEventListener('pointerleave', leave);
+    this.untouch = () => {
+      stage.removeEventListener('pointermove', move);
+      stage.removeEventListener('pointerleave', leave);
     };
   }
 
@@ -114,7 +147,7 @@ export class FallbackRibbon {
     this.t += dt;
     this.clock += dt;
     while (this.queue.length && this.queue[0].at <= this.clock) this.queue.shift()!.fn();
-    [this.scale, this.opacity, this.curl, this.shake, this.light].forEach((s) => s.step(dt));
+    [this.scale, this.opacity, this.curl, this.shake, this.light, this.tilt, this.nudge].forEach((s) => s.step(dt));
     const listening = this.state === 'listening' || this.state === 'activating';
     this.energy = follow(this.energy, listening ? this.raw : 0, dt, 0.05, 0.22);
     const e = this.energy;
@@ -123,12 +156,13 @@ export class FallbackRibbon {
     const sy = s * (1 + breathe + (this.reduced ? 0 : e * 0.35 * Math.sin(this.t * 9)));
     // Integrated, so the spin slows smoothly as the curl relaxes instead of jumping.
     this.angle = (this.angle + dt * this.curl.value * 220) % 360;
-    const rot = this.reduced ? 0 : this.angle;
+    const rot = this.reduced ? 0 : this.angle + clamp(this.tilt.value, -14, 14);
+    const bob = this.reduced ? 0 : clamp(this.nudge.value, -12, 12);
     const squash = 1 - this.curl.value * 0.55;
-    this.group.setAttribute('transform', `translate(${150 + this.shake.value * 18} ${this.cy}) rotate(${rot}) scale(${s * squash} ${sy})`);
+    this.group.setAttribute('transform', `translate(${150 + this.shake.value * 18} ${this.cy + bob}) rotate(${rot}) scale(${s * squash} ${sy})`);
     this.root.style.opacity = String(clamp(this.opacity.value));
     this.glow.setAttribute('opacity', String(clamp((this.light.value - 0.4) * 0.5 + e * (this.reduced ? 0.6 : 0.3))));
   }
 
-  dispose() { this.stop(); this.root.remove(); this.canvas.style.display = ''; }
+  dispose() { this.stop(); this.untouch?.(); this.root.remove(); this.canvas.style.display = ''; }
 }

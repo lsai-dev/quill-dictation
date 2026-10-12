@@ -1,5 +1,6 @@
 import { FrameParams, RendererOptions, RibbonRenderer } from './renderer';
 import { clamp, follow, smoothstep, Spring } from './spring';
+import { RibbonTouch, TOUCH_NODES } from './touch';
 
 export type RibbonState = 'hidden' | 'activating' | 'listening' | 'processing' | 'refining' | 'inserted' | 'cancelled' | 'error';
 
@@ -7,10 +8,13 @@ export interface RibbonOptions extends RendererOptions {
   reducedMotion?: boolean;
   /** Keep a resting ribbon on screen (used in the app window) instead of folding away. */
   persistent?: boolean;
+  /** Let the pointer push, stir and pull the ribbon (the app window's hero). */
+  interactive?: boolean;
 }
 
 const HISTORY = 32;
 const HISTORY_DT = 1 / 30;
+const NO_TOUCH = new Float32Array(TOUCH_NODES * 4);
 
 /**
  * The living object. One continuous ribbon whose every state is a set of
@@ -53,6 +57,9 @@ export class Ribbon {
   private ripple = new Spring(0, 0.28, 0.9);
   private bend = new Spring(0, 0.45, 0.85);
   private loud = new Spring(0, 1.1, 1);
+  // Touch
+  private touch: RibbonTouch | null;
+  private touchLight = new Spring(0, 0.35, 1);
 
   private rawEnergy = 0;
   private energy = 0;
@@ -70,6 +77,7 @@ export class Ribbon {
     this.renderer = new RibbonRenderer(canvas, opts);
     this.reduced = !!opts.reducedMotion;
     this.persistent = !!opts.persistent;
+    this.touch = opts.interactive ? new RibbonTouch(canvas) : null;
   }
 
   setDark(dark: boolean) {
@@ -404,6 +412,15 @@ export class Ribbon {
     this.bend.step(dt);
     this.loud.step(dt);
 
+    // The pointer only plays with a ribbon at rest; while it works, it's left alone.
+    if (this.touch) {
+      const t = this.touch;
+      t.enabled = !this.reduced && (this.state === 'listening' || this.state === 'activating') && this.curl.value < 0.1;
+      t.step(dt, this.extent.value, this.renderer.projector());
+      this.touchLight.to(t.grabbing ? 0.3 : t.hover * 0.14);
+      this.touchLight.step(dt);
+    }
+
     // Waves travel faster when you speak up; phase is integrated, never jumps.
     this.phase += dt * (2.4 + 7.5 * e);
     this.spin += dt * this.spinRate.value * 2.2;
@@ -430,6 +447,7 @@ export class Ribbon {
     } else {
       glow += e * 0.35;
     }
+    glow += this.touchLight.value;
 
     const params: FrameParams = {
       time: this.time,
@@ -445,6 +463,7 @@ export class Ribbon {
       settle: this.settle.value,
       offset: [this.shakeX.value * 0.12, 0, 0],
       energy: this.energyHistory,
+      touch: this.touch?.out ?? NO_TOUCH,
       opacity: clamp(this.opacity.value),
       glow,
       edge,
@@ -468,6 +487,7 @@ export class Ribbon {
   dispose() {
     this.stop();
     this.clearTimers();
+    this.touch?.dispose();
     this.renderer.dispose();
   }
 }

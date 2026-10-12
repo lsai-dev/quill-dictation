@@ -13,7 +13,7 @@ const scaleInput = document.getElementById('scale') as HTMLInputElement;
 scaleInput.value = params.get('scale') ?? scaleInput.value;
 applyScale(Number(scaleInput.value));
 
-const ribbon = createRibbon(canvas, { viewHeight: 2.3 * 1.0, anchorY: 0.6, persistent: params.has('persistent') });
+const ribbon = createRibbon(canvas, { viewHeight: 2.3 * 1.0, anchorY: 0.6, persistent: params.has('persistent'), interactive: params.has('interactive') });
 (window as any).ribbon = ribbon;
 const stateEl = document.getElementById('state')!;
 ribbon.onStateChange = (s) => (stateEl.textContent = s);

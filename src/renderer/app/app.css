@@ -189,7 +189,8 @@ html[data-platform="darwin"] .sidebar { padding-top: 56px; }
 @media (prefers-color-scheme: dark) {
   .hero-stage { background: radial-gradient(60% 90% at 50% 120%, rgba(149, 131, 255, 0.16), transparent 70%), linear-gradient(180deg, #232327, var(--surface)); }
 }
-.hero-canvas { position: absolute; inset: 0; width: 100%; height: 100%; }
+/* The ribbon can be pushed and pulled; let vertical swipes still scroll the page. */
+.hero-canvas { position: absolute; inset: 0; width: 100%; height: 100%; touch-action: pan-y; }
 .hero-copy { padding: 4px 32px 28px; text-align: center; display: grid; justify-items: center; gap: 10px; }
 .hero-title { font: 700 26px/1.15 var(--display); letter-spacing: -0.02em; }
 .hero-status { color: var(--text-2); max-width: 520px; font-size: 14.5px; }

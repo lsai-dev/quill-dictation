@@ -26,6 +26,7 @@ uniform vec3  uOffset;    // whole-object offset (shake)
 uniform float uLoud;      // slow-smoothed loudness: shifts ripples toward longer waves
 uniform float uThick;     // width multiplier (1 = normal; the app icon uses more)
 uniform float uEnergy[32];// voice energy history, [0] = now, ~33 ms apart
+uniform vec4  uTouch[24]; // pointer response along the band: xyz offset, w extra twist (touch.ts)
 
 const float PI = 3.14159265;
 const float TAU = 6.28318531;
@@ -66,6 +67,17 @@ vec3 loopCurve(float s) {
   return (e1 * sin(a) + e2 * cos(a)) * r + ax * (s * 0.36) + vec3(0.0, 0.02, 0.0);
 }
 
+// The pointer's effect at s, smoothly interpolated (Catmull-Rom) between the
+// simulated control points so pushes bend the glass without creases.
+vec4 touchAt(float s) {
+  float f = clamp(s / max(uExtent, 1e-4) + 0.5, 0.0, 1.0) * 23.0;
+  int i = int(min(f, 22.0));
+  float t = f - float(i);
+  vec4 p0 = uTouch[max(i - 1, 0)], p1 = uTouch[i], p2 = uTouch[i + 1], p3 = uTouch[min(i + 2, 23)];
+  return 0.5 * (2.0 * p1 + (p2 - p0) * t + (2.0 * p0 - 5.0 * p1 + 4.0 * p2 - p3) * t * t +
+                (3.0 * p1 - p0 - 3.0 * p2 + p3) * t * t * t);
+}
+
 // Signed distance (0 at centre, 1 at tips) used for the travelling waves.
 float travel(float s) { return abs(s) * 2.0; }
 
@@ -86,6 +98,9 @@ vec3 centreline(float s) {
 
   // Settle: the whole ribbon sinks and recovers like something set down.
   p.y -= uSettle * 0.10 * (1.0 - 0.6 * d * d);
+
+  // Your hand: wherever the pointer has pushed or pulled the band.
+  p += touchAt(s).xyz;
   return p;
 }
 
@@ -95,7 +110,7 @@ float twistAt(float s) {
   float d = travel(s);
   float flutter = uRipple * history(d * 0.45) * 0.22 * sin(TAU * 1.8 * d - uPhase);
   float breath = uBreath * 0.05 * sin(uTime * TAU / 4.6 + s * 2.0);
-  return mix(rest, 0.12, ease(clamp(uCurl, 0.0, 1.0))) + flutter + breath;
+  return mix(rest, 0.12, ease(clamp(uCurl, 0.0, 1.0))) + flutter + breath + touchAt(s).w;
 }
 
 float halfWidth(float s) {
