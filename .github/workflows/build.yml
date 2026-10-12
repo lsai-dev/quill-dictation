@@ -50,8 +50,12 @@ jobs:
           install_runtime: false
           cache: true
           stripdown: true
-      - name: Build native sidecars (CPU, compatibility CPU, Vulkan)
-        run: node scripts/build-native.mjs --vulkan --compat
+      - name: Build native sidecars (helper, CPU and compatibility engines)
+        run: node scripts/build-native.mjs --compat
+      - name: Build the Vulkan GPU engine
+        # Optional at runtime: without it Quill transcribes on the CPU.
+        continue-on-error: true
+        run: node scripts/build-native.mjs --vulkan
       - name: Native unit tests
         working-directory: native
         run: cargo test -p quill-native
