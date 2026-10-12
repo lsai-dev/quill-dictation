@@ -4,7 +4,7 @@
 //   node scripts/build-native.mjs --compat   → also an engine for CPUs without AVX2 (older/budget PCs)
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
-import { join } from 'node:path';
+import { join, parse } from 'node:path';
 
 const exe = process.platform === 'win32' ? '.exe' : '';
 const native = join(process.cwd(), 'native');
@@ -31,7 +31,10 @@ copyFileSync(join(native, 'target', 'release', `quill-engine${exe}`), join(out, 
 
 if (process.argv.includes('--vulkan')) {
   console.log('› Building the Vulkan engine');
-  const dir = join(native, 'target-vulkan');
+  // ggml builds its shader compiler as a deeply nested CMake project whose paths
+  // overflow Windows' 260-character limit from inside the repo, so on Windows the
+  // Vulkan build uses a short directory at the drive root.
+  const dir = process.env.QUILL_VULKAN_TARGET_DIR ?? (process.platform === 'win32' ? join(parse(native).root, 'qv') : join(native, 'target-vulkan'));
   // ggml builds its shader compiler as a nested CMake project; under the Visual
   // Studio generator that nested configure can't find the compiler. Ninja (run
   // from an MSVC developer environment) handles both levels.
