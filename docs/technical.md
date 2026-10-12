@@ -93,15 +93,16 @@ Engine builds are portable: whisper.cpp is compiled for an AVX2/FMA/F16C baselin
 
 Quill updates itself. A few seconds after launch (and every few hours) it checks this repository's GitHub Releases; when a newer version exists it says so in the app, the tray and a notification, downloads **only the changed parts** of the installer when you click Download (differential updates via blockmaps), and installs on **Restart to Update** — or automatically the next time Quill quits. It never restarts mid-dictation, and your settings and voice models are left untouched.
 
-To ship a version:
+Shipping is automatic. Every push to `main` that changes what users install (anything under `src/`, `native/` or `resources/`, the dependencies or the build config; not docs, tests or CI) is released as the next patch version: after 0.2.1 comes 0.2.2, and so on. `scripts/release-version.mjs` picks the version and sets it in CI's checkout only, so `package.json` in the repository can trail the newest release. Release notes, shown on GitHub and in the in-app prompt, are the commit subjects since the previous release.
+
+For a bigger step or hand-written notes, bump the version yourself in the same change:
 
 ```bash
-npm version 0.2.0 --no-git-tag-version   # bump package.json
-# edit resources/release-notes.md          # shown on GitHub and in the in-app prompt
-git commit -am "Quill 0.2.0" && git tag v0.2.0 && git push && git push origin v0.2.0
+npm version 0.3.0 --no-git-tag-version   # CI releases this exact version on merge
+# start resources/release-notes.md with **Quill 0.3.0** to use it instead of commit subjects
 ```
 
-The tag triggers CI to build the installer (or run the **Build** workflow manually with *release* ticked). Only once the end-to-end dictation test passes does it publish the GitHub Release (installer, blockmap and `latest.yml` feed), and it then self-tests the live feed: the freshly built app pretends to be an older version, finds the release and downloads it. Updates need the repository (or its releases) to be public.
+Pushing a tag like `v0.3.0` (matching `package.json`) or running the **Build** workflow manually with *release* ticked also publishes. Only once the end-to-end dictation test passes does it publish the GitHub Release (installer, blockmap and `latest.yml` feed), and it then self-tests the live feed: the freshly built app pretends to be an older version, finds the release and downloads it. Updates need the repository (or its releases) to be public.
 
 ## Project layout
 

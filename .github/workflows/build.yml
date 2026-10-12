@@ -2,8 +2,10 @@ name: Build
 
 on:
   push:
+    # Every push to main that changes the app publishes the next version (see
+    # scripts/release-version.mjs). Pushing a tag like v0.2.0 (matching
+    # package.json) still publishes that exact version.
     branches: [main, "claude/**"]
-    # Pushing a tag like v0.2.0 (matching package.json) publishes a release.
     tags: ["v*"]
   pull_request:
   workflow_dispatch:
@@ -80,16 +82,28 @@ jobs:
     name: Windows installer
     runs-on: windows-latest
     permissions:
-      contents: write # publish GitHub Releases on version tags
+      contents: write # publish GitHub Releases
+    # Releases from main go one at a time, so two quick merges never pick the
+    # same version; a newer push waiting in line replaces an older one.
+    concurrency:
+      group: ${{ github.event_name == 'push' && github.ref == 'refs/heads/main' && 'release-main' || format('windows-{0}', github.run_id) }}
+      cancel-in-progress: false
     env:
       # bindgen (whisper-rs-sys) needs libclang; the runner image ships LLVM here.
       LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0 # tags and history, to pick the version and write release notes
       - uses: actions/setup-node@v4
         with:
           node-version: 22
           cache: npm
+      - name: Choose the release version (pushes to main)
+        id: release
+        if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+        shell: bash
+        run: node scripts/release-version.mjs
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
@@ -182,7 +196,7 @@ jobs:
       # installer, its blockmap (differential downloads) and latest.yml (the update
       # feed). electron-builder's own publisher races itself on Windows builds.
       - name: Publish the GitHub release
-        if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release || steps.release.outputs.publish == 'true'
         shell: bash
         run: |
           VERSION=$(node -p "require('./package.json').version")
@@ -217,10 +231,10 @@ jobs:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           GH_REPO: ${{ github.repository }}
       - name: Note — in-app updates need a public repository
-        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release) && github.event.repository.private
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release || steps.release.outputs.publish == 'true') && github.event.repository.private
         run: echo "::notice::Release published. This repository is private, so installed copies of Quill can't download updates yet. Make the repository public to enable in-app updates."
       - name: Update feed self-test (the released app finds and downloads itself)
-        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release) && !github.event.repository.private
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release || steps.release.outputs.publish == 'true') && !github.event.repository.private
         shell: pwsh
         run: |
           $out = Join-Path $PWD 'e2e/update-selftest.json'
