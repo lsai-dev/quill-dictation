@@ -41,6 +41,9 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: native
+          # Bump when the CMake generator/config for whisper.cpp changes; cargo does
+          # not track those env vars, so a stale cache would keep old engine builds.
+          key: ninja-release-1
       - name: MSVC developer environment (cl + ninja on PATH)
         uses: ilammy/msvc-dev-cmd@v1
       - name: Install Vulkan SDK (for the GPU engine)
@@ -52,6 +55,11 @@ jobs:
           stripdown: true
       - name: Build native sidecars (helper, CPU and compatibility engines)
         run: node scripts/build-native.mjs --compat
+      - name: Cache the Vulkan engine build
+        uses: actions/cache@v4
+        with:
+          path: D:\qv
+          key: vulkan-engine-ninja-release-1-${{ runner.os }}-${{ hashFiles('native/Cargo.lock', 'native/engine/**') }}
       - name: Build the Vulkan GPU engine
         # Optional at runtime: without it Quill transcribes on the CPU.
         continue-on-error: true
@@ -79,7 +87,12 @@ jobs:
           curl -sSfL --retry 3 -o e2e/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
       - name: Engine benchmark (standalone, no Electron)
         timeout-minutes: 5
-        run: node test/e2e/engine-bench.mjs resources/bin/quill-engine-cpu.exe e2e/ggml-tiny.en.bin e2e/jfk.wav 2
+        run: node test/e2e/engine-bench.mjs resources/bin/quill-engine-cpu.exe e2e/ggml-tiny.en.bin e2e/jfk.wav
+      - name: Engine benchmark (Vulkan build, CPU mode)
+        if: hashFiles('resources/bin/quill-engine-vulkan.exe') != ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: node test/e2e/engine-bench.mjs resources/bin/quill-engine-vulkan.exe e2e/ggml-tiny.en.bin e2e/jfk.wav
       - name: End-to-end dictation on Windows (hook, engine, paste)
         timeout-minutes: 8
         run: node test/e2e/dictation.e2e.mjs

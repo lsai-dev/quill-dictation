@@ -16,12 +16,17 @@ mkdirSync(out, { recursive: true });
 // Distributable builds target a portable AVX2/FMA/F16C baseline instead.
 // Set QUILL_NATIVE_CPU=1 for a build tuned to this machine only.
 const portable = process.env.QUILL_NATIVE_CPU ? {} : { GGML_NATIVE: 'OFF' };
+// On Windows, build whisper.cpp with Ninja in an explicit Release configuration
+// (run from an MSVC developer environment). The multi-config Visual Studio
+// generator produced engines far slower than their Linux counterparts.
+const windowsCmake =
+  process.platform === 'win32' && !process.env.CMAKE_GENERATOR ? { CMAKE_GENERATOR: 'Ninja', CMAKE_BUILD_TYPE: 'Release' } : {};
 
 const cargo = (args, targetDir, extraEnv = {}) =>
   execFileSync('cargo', ['build', '--release', ...args], {
     cwd: native,
     stdio: 'inherit',
-    env: { ...process.env, ...portable, ...extraEnv, ...(targetDir ? { CARGO_TARGET_DIR: targetDir } : {}) },
+    env: { ...process.env, ...portable, ...windowsCmake, ...extraEnv, ...(targetDir ? { CARGO_TARGET_DIR: targetDir } : {}) },
   });
 
 console.log('› Building quill-native and the CPU engine');
@@ -51,6 +56,7 @@ if (process.argv.includes('--compat')) {
     stdio: 'inherit',
     env: {
       ...process.env,
+      ...windowsCmake,
       CARGO_TARGET_DIR: dir,
       GGML_NATIVE: 'OFF',
       GGML_AVX: 'OFF',

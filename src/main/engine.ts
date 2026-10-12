@@ -1,5 +1,4 @@
 import { EventEmitter } from 'node:events';
-import { cpus } from 'node:os';
 import { LineProcess } from './lineProcess';
 import { nativeBinary } from './paths';
 import { log } from './log';
@@ -95,7 +94,8 @@ export class Engine extends EventEmitter {
     const variant = t.device === 'gpu' ? 'vulkan' : 'cpu';
     if (!this.proc?.running || this.variant !== variant) await this.spawn(variant);
     const started = Date.now();
-    const threads = Math.max(1, Math.min(8, Math.floor((cpus().length || 2) / 2)));
+    // 0 = let the engine use the physical core count (capped at 8).
+    const threads = 0;
     const r = await this.proc!.request<{ load_ms: number }>(
       'load',
       { model: t.path, gpu: t.device === 'gpu', flash_attn: true, threads },
