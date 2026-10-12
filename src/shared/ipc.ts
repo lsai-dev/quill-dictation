@@ -14,6 +14,7 @@ export const IPC = {
   // app window ↔ main
   snapshot: 'app:snapshot',
   update: 'app:update',
+  dictationPhase: 'app:dictation-phase',
   setSettings: 'app:set-settings',
   downloadModel: 'app:download-model',
   cancelDownload: 'app:cancel-download',

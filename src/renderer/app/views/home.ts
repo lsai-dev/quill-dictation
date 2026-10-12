@@ -41,7 +41,19 @@ export function HomeView() {
       ribbon.show();
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => ribbon?.setDark(e.matches));
       // Only animate while visible — no GPU work for a view you're not looking at.
-      new IntersectionObserver(([entry]) => (entry.isIntersecting ? ribbon?.start() : ribbon?.stop())).observe(canvas);
+      let onScreen = true;
+      let dictating = false;
+      const update = () => (onScreen && !dictating ? ribbon?.start() : ribbon?.stop());
+      new IntersectionObserver(([entry]) => {
+        onScreen = entry.isIntersecting;
+        update();
+      }).observe(canvas);
+      // While you dictate, the overlay is the thing to watch; give it (and the
+      // transcription engine) the processor.
+      api.onDictationPhase((phase) => {
+        dictating = phase !== 'idle';
+        update();
+      });
     } catch {
       canvas.replaceWith(h('div', { class: 'hero-fallback' }));
     }

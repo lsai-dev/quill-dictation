@@ -125,7 +125,10 @@ export class Engine extends EventEmitter {
     const name = variant === 'vulkan' ? 'quill-engine-vulkan' : this.cpuCompat ? 'quill-engine-compat' : 'quill-engine-cpu';
     const bin = nativeBinary(name) ?? (variant === 'cpu' ? nativeBinary('quill-engine-compat') : null);
     if (!bin) throw new Error(`Transcription engine (${variant}) is missing from this installation`);
-    const proc = new LineProcess(`engine:${variant}`, bin);
+    // Above-normal priority: transcription is short, user-initiated and latency
+    // critical. On Windows' strict-priority scheduler a normal-priority engine can
+    // be starved by busy UI threads (e.g. software rendering on machines without a GPU).
+    const proc = new LineProcess(`engine:${variant}`, bin, [], 'above-normal');
     proc.on('exit', (code: number | null) => {
       if (this.proc !== proc) return;
       this.loaded = null;

@@ -23,6 +23,8 @@ export function Onboarding(onDone: () => void) {
       ribbon.setDark(matchMedia('(prefers-color-scheme: dark)').matches);
       ribbon.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);
       setTimeout(() => ribbon?.show(), 350);
+      // Pause while a dictation runs (the "Try it" step): the overlay is the focus.
+      api.onDictationPhase((phase) => (phase === 'idle' ? ribbon?.start() : ribbon?.stop()));
     } catch {
       /* WebGL unavailable: the copy carries the experience */
     }
@@ -57,6 +59,7 @@ export function Onboarding(onDone: () => void) {
     ribbon?.success();
     setTimeout(() => {
       ribbon?.dispose();
+      ribbon = null;
       el.remove();
       onDone();
     }, 700);

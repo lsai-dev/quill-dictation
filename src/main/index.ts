@@ -137,6 +137,11 @@ async function main() {
   engine.on('status', broadcast);
   downloads.on('progress', broadcast);
   dictation.on('result', broadcast);
+  // Let the app window pause its decorative ribbon while you dictate.
+  dictation.on('phase', (phase: string) => {
+    const w = getAppWindow();
+    if (w && !w.isDestroyed()) w.webContents.send(IPC.dictationPhase, phase);
+  });
   settings.on('change', async (next: Settings, prev: Settings) => {
     if (next.hotkey !== prev.hotkey) await hotkey.apply(next.hotkey);
     if (next.language !== prev.language || next.engine !== prev.engine) {

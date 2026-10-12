@@ -62,6 +62,7 @@ export function createMockApi(): NonNullable<Window['quill']> {
     snapshot: async () => snap(),
     onUpdate: (cb) => { listener = cb; },
     onNavigate: () => undefined,
+    onDictationPhase: () => undefined,
     setSettings: async (patch) => { settings = { ...settings, ...patch }; push(); return settings; },
     downloadModel: async (id) => {
       const m = MODELS.find((x) => x.id === id)!;

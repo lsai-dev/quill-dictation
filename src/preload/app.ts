@@ -7,6 +7,9 @@ const api = {
   onUpdate(cb: (s: AppSnapshot) => void) {
     ipcRenderer.on(IPC.update, (_e, s: AppSnapshot) => cb(s));
   },
+  onDictationPhase(cb: (phase: string) => void) {
+    ipcRenderer.on(IPC.dictationPhase, (_e, p: string) => cb(p));
+  },
   onNavigate(cb: (section: string) => void) {
     ipcRenderer.on('app:navigate', (_e, s: string) => cb(s));
   },

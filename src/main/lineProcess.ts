@@ -1,4 +1,5 @@
 import { ChildProcess, spawn } from 'node:child_process';
+import { constants, setPriority } from 'node:os';
 import { EventEmitter } from 'node:events';
 import { log } from './log';
 
@@ -24,7 +25,12 @@ export class LineProcess extends EventEmitter {
   private nextId = 1;
   ready: ProtocolEvent | null = null;
 
-  constructor(readonly name: string, private bin: string, private args: string[] = []) {
+  constructor(
+    readonly name: string,
+    private bin: string,
+    private args: string[] = [],
+    private priority: 'normal' | 'above-normal' = 'normal',
+  ) {
     super();
   }
 
@@ -62,6 +68,13 @@ export class LineProcess extends EventEmitter {
       }
       this.child = child;
       this.buffer = '';
+      if (this.priority === 'above-normal' && child.pid) {
+        try {
+          setPriority(child.pid, constants.priority.PRIORITY_ABOVE_NORMAL);
+        } catch (e) {
+          log.debug(`[${this.name}] could not raise priority: ${(e as Error).message}`);
+        }
+      }
       child.stdout!.setEncoding('utf8');
       child.stdout!.on('data', (chunk: string) => this.onData(chunk));
       child.stderr!.setEncoding('utf8');
