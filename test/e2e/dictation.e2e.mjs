@@ -6,6 +6,9 @@
 // Chromium plays QUILL_AUDIO as the microphone. The test starts a dictation,
 // lets it listen, finishes it, and checks that the transcript came back and
 // was pasted into a focused text field.
+//
+// With QUILL_CLEANUP_MODEL (a GGUF) and QUILL_CLEANUP_ID (its catalog id) the
+// dictation also runs through local cleanup, and the test checks that it did.
 import { _electron as electron } from 'playwright';
 import { copyFileSync, mkdirSync, mkdtempSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
@@ -15,6 +18,8 @@ const model = process.env.QUILL_MODEL;
 const audio = process.env.QUILL_AUDIO;
 const expect = (process.env.QUILL_EXPECT ?? 'country').toLowerCase();
 const shots = process.env.QUILL_SHOTS;
+const cleanupModel = process.env.QUILL_CLEANUP_MODEL;
+const cleanupId = process.env.QUILL_CLEANUP_ID;
 if (!model || !audio) {
   console.error('Set QUILL_MODEL and QUILL_AUDIO');
   process.exit(2);
@@ -25,7 +30,9 @@ mkdirSync(join(userData, 'models'), { recursive: true });
 const file = basename(model);
 copyFileSync(model, join(userData, 'models', file));
 const modelId = file.replace(/^ggml-/, '').replace(/\.bin$/, '');
-writeFileSync(join(userData, 'settings.json'), JSON.stringify({ onboarded: true, modelId, language: 'en', sounds: false }));
+if (cleanupModel) copyFileSync(cleanupModel, join(userData, 'models', basename(cleanupModel)));
+const cleanupSettings = cleanupModel ? { cleanup: true, cleanupModelId: cleanupId } : {};
+writeFileSync(join(userData, 'settings.json'), JSON.stringify({ onboarded: true, modelId, language: 'en', sounds: false, ...cleanupSettings }));
 
 const app = await electron.launch({
   cwd: resolve('.'),
@@ -80,6 +87,14 @@ const status = await poll(async () => {
   return s?.state === 'ready' ? s : null;
 }, 120000, 'engine ready');
 console.log(`✓ engine ready: ${status.modelId} on ${status.device} (${status.loadMs} ms)`);
+if (cleanupModel) {
+  const c = await poll(async () => {
+    const s = await main(() => globalThis.__quill?.cleanup.status);
+    if (s?.state === 'error') return fail(`cleanup engine error: ${s.message}`);
+    return s?.state === 'ready' ? s : null;
+  }, 180000, 'cleanup engine ready');
+  console.log(`✓ cleanup ready: ${c.modelId} on ${c.device} (${c.loadMs} ms)`);
+}
 const hw = await main(() => {
   const { hardware, recs } = globalThis.__quill.hardware();
   const q = globalThis.__quill;
@@ -109,6 +124,13 @@ await shot(overlay, 'e2e-processing.png');
 const result = await poll(() => main(() => globalThis.__quill.dictation.history[0] ?? null), 180000, 'transcript');
 console.log(`✓ transcript (${result.processMs} ms for ${result.audioMs} ms of audio): "${result.text}"`);
 if (!result.text.toLowerCase().includes(expect)) await fail(`transcript does not contain "${expect}"`);
+if (cleanupModel) {
+  if (!result.cleanup) await fail('cleanup was on but the dictation did not go through it');
+  if (result.cleanup === 'skipped') await fail('cleanup was skipped although its engine was ready');
+  console.log(`✓ cleanup: ${result.cleanup} in ${result.cleanupMs} ms${result.original ? ` (was: "${result.original}")` : ''}`);
+  // "Ask not what your country can do for you": the negation must survive.
+  if (!/\bnot\b/i.test(result.text)) await fail('cleanup lost the negation in "ask not"');
+}
 
 const pasted = await poll(async () => (await appWin.evaluate(() => document.getElementById('e2e-target').value)) || null, 5000, 'pasted text').catch(() => null);
 if (pasted) console.log(`✓ pasted into the focused field: "${pasted.trim().slice(0, 80)}…"`);

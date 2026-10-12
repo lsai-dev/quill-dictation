@@ -31,6 +31,48 @@ jobs:
       - name: Native unit tests
         working-directory: native
         run: cargo test -p quill-native
+      - name: Cleanup engine — build and unit tests
+        working-directory: native
+        env:
+          RUSTFLAGS: -C target-feature=+avx,+avx2,+fma,+f16c,+bmi2
+          CARGO_TARGET_DIR: target-cleanup
+          GGML_NATIVE: "OFF"
+        run: |
+          cargo build --release -p quill-cleanup
+          cargo test --release -p quill-cleanup
+      - name: Cleanup engine — integration tests (tiny model)
+        run: npx vitest run test/cleanupEngine.test.ts
+
+  cleanup-eval:
+    name: Cleanup quality (real models)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native -> target-cleanup
+      - name: Build the cleanup engine
+        working-directory: native
+        env:
+          RUSTFLAGS: -C target-feature=+avx,+avx2,+fma,+f16c,+bmi2
+          CARGO_TARGET_DIR: target-cleanup
+          GGML_NATIVE: "OFF"
+        run: cargo build --release -p quill-cleanup
+      - name: Evaluate every catalog model (downloads them; CPU only)
+        timeout-minutes: 45
+        run: npm run eval:cleanup -- --bin native/target-cleanup/release/quill-cleanup --dir models --download --out cleanup-eval.json
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: cleanup-eval
+          path: cleanup-eval.json
+          if-no-files-found: ignore
 
   windows:
     name: Windows installer
@@ -49,7 +91,9 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: native
+          workspaces: |
+            native -> target
+            native -> target-cleanup
           # Bump when the CMake generator/config for whisper.cpp changes; cargo does
           # not track those env vars, so a stale cache would keep old engine builds.
           key: ninja-release-1
@@ -62,17 +106,22 @@ jobs:
           install_runtime: false
           cache: true
           stripdown: true
-      - name: Build native sidecars (helper, CPU and compatibility engines)
-        run: node scripts/build-native.mjs --compat
+      - name: Build native sidecars (helper, CPU and compatibility engines, cleanup engine)
+        run: node scripts/build-native.mjs --compat --cleanup
       - name: Cache the Vulkan engine build
         uses: actions/cache@v4
         with:
           path: D:\qv
           key: vulkan-engine-ninja-release-1-${{ runner.os }}-${{ hashFiles('native/Cargo.lock', 'native/engine/**') }}
-      - name: Build the Vulkan GPU engine
-        # Optional at runtime: without it Quill transcribes on the CPU.
+      - name: Cache the Vulkan cleanup engine build
+        uses: actions/cache@v4
+        with:
+          path: D:\qc
+          key: vulkan-cleanup-${{ runner.os }}-${{ hashFiles('native/Cargo.lock', 'native/cleanup/**') }}
+      - name: Build the Vulkan GPU engines
+        # Optional at runtime: without them Quill transcribes and polishes on the CPU.
         continue-on-error: true
-        run: node scripts/build-native.mjs --vulkan
+        run: node scripts/build-native.mjs --vulkan --cleanup
       - name: Native unit tests
         working-directory: native
         run: cargo test -p quill-native
@@ -100,6 +149,7 @@ jobs:
           mkdir -p e2e
           curl -sSfL --retry 3 -o e2e/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
           curl -sSfL --retry 3 -o e2e/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+          curl -sSfL --retry 3 -o e2e/s1-mini-q4_k_m.gguf https://huggingface.co/superwhisper/s1-mini-GGUF/resolve/main/s1-mini-q4_k_m.gguf
       - name: Engine benchmark (standalone, no Electron)
         timeout-minutes: 5
         run: node test/e2e/engine-bench.mjs resources/bin/quill-engine-cpu.exe e2e/ggml-tiny.en.bin e2e/jfk.wav
@@ -114,6 +164,8 @@ jobs:
         env:
           QUILL_MODEL: e2e/ggml-tiny.en.bin
           QUILL_AUDIO: e2e/jfk.wav
+          QUILL_CLEANUP_MODEL: e2e/s1-mini-q4_k_m.gguf
+          QUILL_CLEANUP_ID: s1-mini
           QUILL_SHOTS: e2e
       - uses: actions/upload-artifact@v4
         if: always()
