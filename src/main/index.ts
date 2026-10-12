@@ -91,6 +91,7 @@ async function main() {
     hotkeyAvailable: hotkey.usingNative || !hotkey.error,
     hotkeyError: hotkey.error,
   });
+  let tray: ReturnType<typeof createTray> | null = null;
   let pending: NodeJS.Timeout | null = null;
   const broadcast = () => {
     if (pending) return;
@@ -98,7 +99,7 @@ async function main() {
       pending = null;
       const w = getAppWindow();
       if (w && !w.isDestroyed()) w.webContents.send(IPC.update, snapshot());
-      tray.rebuild();
+      tray?.rebuild();
     }, 50);
   };
 
@@ -184,7 +185,7 @@ async function main() {
   });
   ipcMain.handle(IPC.openModelsFolder, () => shell.openPath(modelsDir()));
 
-  const tray = createTray({
+  tray = createTray({
     dictate: () => (dictation.busy ? dictation.finish() : dictation.start()),
     open: (section) => showAppWindow(section),
     quit: () => app.quit(),
@@ -204,6 +205,9 @@ async function main() {
     void engine.unload();
     overlay.destroy();
   });
+
+  // End-to-end tests drive the real pipeline through this handle (never set in normal use).
+  if (process.env.QUILL_E2E) (globalThis as Record<string, unknown>).__quill = { dictation, engine, settings, downloads, hotkey, native };
 
   applyLoginItem(settings.get().launchAtLogin);
   await refreshHardware();

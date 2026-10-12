@@ -69,6 +69,7 @@ button, select, textarea, input, a, .nav, .seg { -webkit-app-region: no-drag; }
 
 /* ── Sidebar ─────────────────────────────────────────────────────────────── */
 .sidebar {
+  -webkit-app-region: drag;
   display: flex;
   flex-direction: column;
   padding: 52px 12px 16px;

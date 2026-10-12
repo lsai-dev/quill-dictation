@@ -11,7 +11,6 @@ const LANGUAGES: [string, string][] = [
 const SHORTCUTS: [string, string][] = [
   ['win+space', 'Win + Space'],
   ['ctrl+space', 'Ctrl + Space'],
-  ['ctrl+win', 'Ctrl + Win'],
   ['alt+space', 'Alt + Space'],
   ['ctrl+shift+space', 'Ctrl + Shift + Space'],
   ['f9', 'F9'],

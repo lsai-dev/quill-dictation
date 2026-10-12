@@ -17,6 +17,8 @@ const systemReduced = matchMedia('(prefers-reduced-motion: reduce)');
 
 let soundsOn = true;
 let recording = false;
+/** Whether the current session still wants the microphone (guards slow device start-up). */
+let wantMic = false;
 let active = false;
 let motionPref: boolean | null = null;
 
@@ -92,14 +94,25 @@ ribbon.onHidden = () => {
   api?.hidden();
 };
 
+let starting: Promise<void> | null = null;
 async function startCapture(deviceId: string) {
-  try {
-    await capture.start(deviceId);
-    recording = true;
-  } catch (e) {
-    recording = false;
-    api?.micError(micErrorMessage(e));
-  }
+  wantMic = true;
+  const run = (async () => {
+    try {
+      await capture.start(deviceId);
+      recording = true;
+      // Stopped or cancelled while the device was opening: release it.
+      if (!wantMic) {
+        capture.abort();
+        recording = false;
+      }
+    } catch (e) {
+      recording = false;
+      if (wantMic) api?.micError(micErrorMessage(e));
+    }
+  })();
+  starting = run;
+  await run;
 }
 
 function handle(c: OverlayCommand) {
@@ -124,10 +137,14 @@ function handle(c: OverlayCommand) {
       setStatus('Transcribing');
       if (soundsOn) sounds.stop();
       ribbon.process();
-      void capture.stop().then((pcm) => {
+      void (async () => {
+        // If the microphone is still opening, let it finish so we return what it heard.
+        if (starting) await starting;
+        wantMic = false;
+        const pcm = recording ? await capture.stop() : new Float32Array(0);
         recording = false;
         api?.sendAudio(pcm);
-      });
+      })();
       break;
     }
     case 'process':
@@ -141,12 +158,14 @@ function handle(c: OverlayCommand) {
       ribbon.success();
       break;
     case 'cancel':
+      wantMic = false;
       if (recording) capture.abort();
       recording = false;
       setStatus(null);
       ribbon.cancel();
       break;
     case 'error':
+      wantMic = false;
       if (recording) capture.abort();
       recording = false;
       if (soundsOn) sounds.error();

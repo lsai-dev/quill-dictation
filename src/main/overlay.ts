@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain, screen } from 'electron';
 import { EventEmitter } from 'node:events';
 import { IPC, OverlayAction } from '../shared/ipc';
 import type { OverlayCommand } from '../shared/types';
+import { toFloat32 } from '../shared/audio';
 import { preloadPath, rendererUrl } from './paths';
 import { log } from './log';
 
@@ -77,8 +78,8 @@ export class OverlayWindow extends EventEmitter {
       for (const c of this.queue.splice(0)) this.send(c);
     });
     ipcMain.removeAllListeners(IPC.overlayAudio);
-    ipcMain.on(IPC.overlayAudio, (e, buf: ArrayBuffer) => {
-      if (e.sender === this.win?.webContents) this.emit('audio', new Float32Array(buf));
+    ipcMain.on(IPC.overlayAudio, (e, buf: unknown) => {
+      if (e.sender === this.win?.webContents) this.emit('audio', toFloat32(buf));
     });
     ipcMain.removeAllListeners(IPC.overlayAction);
     ipcMain.on(IPC.overlayAction, (e, a: OverlayAction) => {

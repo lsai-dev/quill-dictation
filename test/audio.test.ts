@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { analyzeSpeech, prepareForModel, SAMPLE_RATE } from '../src/shared/audio';
+import { analyzeSpeech, prepareForModel, SAMPLE_RATE, toFloat32 } from '../src/shared/audio';
 
 function noise(sec: number, level: number, seed = 1): Float32Array {
   const out = new Float32Array(Math.round(sec * SAMPLE_RATE));
@@ -57,5 +57,20 @@ describe('analyzeSpeech', () => {
     const peak = audio.reduce((m, x) => Math.max(m, Math.abs(x)), 0);
     expect(peak).toBeGreaterThan(0.15); // gain is capped at +21.6 dB
     expect(peak).toBeLessThanOrEqual(0.71);
+  });
+});
+
+describe('toFloat32', () => {
+  const samples = new Float32Array([0.5, -0.25, 1, 0]);
+  it('reads ArrayBuffers', () => {
+    expect(Array.from(toFloat32(samples.slice().buffer))).toEqual([0.5, -0.25, 1, 0]);
+  });
+  it('reads unaligned Node Buffers as samples, not bytes', () => {
+    const pool = Buffer.alloc(samples.byteLength + 1);
+    Buffer.from(samples.buffer).copy(pool, 1);
+    expect(Array.from(toFloat32(pool.subarray(1)))).toEqual([0.5, -0.25, 1, 0]);
+  });
+  it('ignores junk', () => {
+    expect(toFloat32('nope').length).toBe(0);
   });
 });

@@ -143,17 +143,44 @@ export class Downloads extends EventEmitter {
     }
   }
 
-  /** The model host returns the file's SHA-256 and size on the redirect response. */
-  private async probe(url: string, signal: AbortSignal): Promise<{ sha256: string | null; size: number | null }> {
-    try {
-      const res = await net.fetch(url, { method: 'HEAD', redirect: 'manual', signal } as RequestInit);
-      const etag = res.headers.get('x-linked-etag') || res.headers.get('etag') || '';
-      const sha = etag.match(/[a-f0-9]{64}/i)?.[0]?.toLowerCase() ?? null;
-      const size = Number(res.headers.get('x-linked-size')) || null;
-      return { sha256: sha, size };
-    } catch {
-      return { sha256: null, size: null };
-    }
+  /**
+   * The model host answers with a redirect to its CDN; that redirect carries
+   * the file's SHA-256 (`x-linked-etag`) and size (`x-linked-size`).
+   */
+  private probe(url: string, signal: AbortSignal): Promise<{ sha256: string | null; size: number | null }> {
+    return new Promise((resolve) => {
+      const none = { sha256: null, size: null };
+      let done = false;
+      const finish = (v: { sha256: string | null; size: number | null }) => {
+        if (done) return;
+        done = true;
+        clearTimeout(timer);
+        try {
+          req.abort();
+        } catch {
+          /* already finished */
+        }
+        resolve(v);
+      };
+      const read = (headers: Record<string, string | string[]>) => {
+        const get = (k: string) => {
+          const v = headers[k] ?? headers[k.toLowerCase()];
+          return Array.isArray(v) ? v[0] : v ?? '';
+        };
+        const etag = get('x-linked-etag') || get('etag');
+        return {
+          sha256: etag.match(/[a-f0-9]{64}/i)?.[0]?.toLowerCase() ?? null,
+          size: Number(get('x-linked-size')) || null,
+        };
+      };
+      const req = net.request({ url, method: 'HEAD', redirect: 'manual' });
+      const timer = setTimeout(() => finish(none), 15000);
+      signal.addEventListener('abort', () => finish(none));
+      req.on('redirect', (_status, _method, _to, headers) => finish(read(headers)));
+      req.on('response', (res) => finish(read(res.headers)));
+      req.on('error', () => finish(none));
+      req.end();
+    });
   }
 }
 

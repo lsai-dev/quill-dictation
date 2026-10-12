@@ -21,7 +21,11 @@ function icon() {
 export function createTray(a: TrayActions) {
   tray = new Tray(icon());
   tray.setToolTip('Quill');
-  const rebuild = () =>
+  let key = '';
+  const rebuild = () => {
+    const next = a.hotkeyLabel() + '|' + a.modelLabel();
+    if (next === key) return;
+    key = next;
     tray?.setContextMenu(
       Menu.buildFromTemplate([
         { label: `Start Dictation`, accelerator: undefined, sublabel: a.hotkeyLabel(), click: a.dictate },
@@ -34,6 +38,7 @@ export function createTray(a: TrayActions) {
         { label: 'Quit Quill', click: a.quit },
       ]),
     );
+  };
   rebuild();
   tray.on('click', () => a.open());
   nativeTheme.on('updated', () => tray?.setImage(icon()));

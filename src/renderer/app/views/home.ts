@@ -40,6 +40,8 @@ export function HomeView() {
       ribbon.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);
       ribbon.show();
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => ribbon?.setDark(e.matches));
+      // Only animate while visible — no GPU work for a view you're not looking at.
+      new IntersectionObserver(([entry]) => (entry.isIntersecting ? ribbon?.start() : ribbon?.stop())).observe(canvas);
     } catch {
       canvas.replaceWith(h('div', { class: 'hero-fallback' }));
     }

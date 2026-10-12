@@ -100,3 +100,13 @@ export function prepareForModel(samples: Float32Array): { audio: Float32Array; a
   for (let i = 0; i < trimmed.length; i++) peak = Math.max(peak, Math.abs(trimmed[i]));
   return { audio: normalize(trimmed, peak), analysis };
 }
+
+/** IPC may deliver audio as an ArrayBuffer or as a (possibly unaligned) byte view. */
+export function toFloat32(b: unknown): Float32Array {
+  if (b instanceof ArrayBuffer) return new Float32Array(b);
+  if (ArrayBuffer.isView(b)) {
+    const bytes = new Uint8Array(b.buffer, b.byteOffset, b.byteLength - (b.byteLength % 4));
+    return new Float32Array(bytes.slice().buffer);
+  }
+  return new Float32Array(0);
+}

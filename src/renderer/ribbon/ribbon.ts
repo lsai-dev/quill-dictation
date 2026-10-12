@@ -334,10 +334,10 @@ export class Ribbon {
     this.raf = requestAnimationFrame(tick);
   }
 
+  /** Pause rendering. Choreography runs on the ribbon's own clock, so it resumes exactly where it left off. */
   stop() {
     cancelAnimationFrame(this.raf);
     this.raf = 0;
-    this.clearTimers();
   }
 
   /** Advance and render one frame. Exposed for deterministic captures. */
@@ -426,6 +426,7 @@ export class Ribbon {
 
   dispose() {
     this.stop();
+    this.clearTimers();
     this.renderer.dispose();
   }
 }
