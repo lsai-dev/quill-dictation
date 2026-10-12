@@ -138,6 +138,13 @@ jobs:
             exit 1
           fi
           FILES=("release/Quill-Setup-$VERSION.exe" "release/Quill-Setup-$VERSION.exe.blockmap" release/latest.yml)
+          # Two releases on one tag (left by an interrupted publish) make the update
+          # feed's download URLs ambiguous: keep the oldest, remove the others.
+          DUPES=$(gh api "repos/$GH_REPO/releases?per_page=100" --jq ".[] | select(.tag_name == \"$TAG\") | .id" | sort -n | tail -n +2)
+          for id in $DUPES; do
+            echo "Removing duplicate release $id for $TAG"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          done
           if gh release view "$TAG" > /dev/null 2>&1; then
             gh release upload "$TAG" "${FILES[@]}" --clobber
             if [[ -z "$(gh release view "$TAG" --json body -q .body)" ]]; then
