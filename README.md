@@ -31,7 +31,7 @@ Your words land right at the cursor. Your clipboard is just as you left it.
 
 ## Your words, polished.
 
-People don't speak in finished sentences. Quill's optional **Polishing** removes the *ums*, the stutters and the false starts. It fixes punctuation and capitals. Say *"at 3, no wait, at 4"* and you get *"at 4."*
+People don't speak in finished sentences. Quill's optional **Cleanup** removes the *ums*, the stutters and the false starts. It fixes punctuation and capitals. Say *"at 3, no wait, at 4"* and you get *"at 4."*
 
 Your meaning, tone, names and numbers stay exactly as you said them. Every result is checked before it's inserted. If anything doesn't pass, you get your words as spoken.
 
@@ -51,7 +51,7 @@ When your graphics card is faster, Quill uses it. When it isn't, Quill quietly u
 
 ## Fluent in more than one language.
 
-Polishing speaks English and Spanish, with instructions tuned for each. Move between them mid-thought. Quill switches in milliseconds.
+Cleanup speaks English and Spanish, with instructions tuned for each. Move between them mid-thought. Quill switches in milliseconds.
 
 <br>
 
@@ -77,7 +77,7 @@ Quill checks for new versions on its own. It downloads only what changed, never 
 
 Your voice never leaves your PC.
 
-Speech recognition and Polishing run entirely on your device. There's no account, no cloud and no fallback to a server. Recent dictations are kept in memory only and disappear when you quit.
+Speech recognition and Cleanup run entirely on your device. There's no account, no cloud and no fallback to a server. Recent dictations are kept in memory only and disappear when you quit.
 
 Quill connects to the internet for two things: downloading the models you choose from Hugging Face, and checking GitHub for updates. That's it.
 
@@ -91,7 +91,7 @@ Quill connects to the internet for two things: downloading the models you choose
 
 - Windows, 64-bit
 - An internet connection for the first model download (models range from 57 MB to 3 GB)
-- Polishing needs a processor with AVX2, or a graphics card with room for it. Without one, dictation works just the same.
+- Cleanup needs a processor with AVX2, or a graphics card with room for it. Without one, dictation works just the same.
 - A graphics card with Vulkan support is used automatically when it helps. It isn't required.
 
 Quill can't type into apps running as administrator, because Windows doesn't allow it.
@@ -110,7 +110,7 @@ npm test               # unit tests
 npm run dist:win       # build the Windows installer
 ```
 
-Architecture, the ribbon's design, model recommendations, Polishing, GPU builds and releases are covered in **[How Quill works](docs/technical.md)**. The cleanup model research is in [docs/cleanup-models.md](docs/cleanup-models.md), and the native engines are documented in [native/README.md](native/README.md).
+Architecture, the ribbon's design, model recommendations, Cleanup, GPU builds and releases are covered in **[How Quill works](docs/technical.md)**. The cleanup model research is in [docs/cleanup-models.md](docs/cleanup-models.md), and the native engines are documented in [native/README.md](native/README.md).
 
 <br>
 
