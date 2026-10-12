@@ -183,7 +183,7 @@ interface Row {
 }
 
 function Choices(role: 'dictation' | 'cleanup') {
-  const list = h('div', { class: 'choice-list', role: 'radiogroup', 'aria-label': role === 'dictation' ? 'Dictation models' : 'Cleanup models' });
+  const list = h('div', { class: 'choice-list', role: 'list', 'aria-label': role === 'dictation' ? 'Dictation models' : 'Cleanup models' });
   const marker = h('span', { class: 'choice-marker', 'aria-hidden': 'true' });
   list.append(marker);
   const more = h('button', { class: 'link choice-more', type: 'button', 'aria-expanded': 'false' });
@@ -234,6 +234,7 @@ function Choices(role: 'dictation' | 'cleanup') {
       const on = r.id === expanded;
       r.el.classList.toggle('expanded', on);
       r.el.querySelector('.choice-main')!.setAttribute('aria-expanded', String(on));
+      (r.el.querySelector('.choice-details') as HTMLElement).inert = !on;
     }
   }
 
@@ -277,9 +278,10 @@ function ChoiceRow(role: 'dictation' | 'cleanup', id: string, onToggle: () => vo
   const tag = h('span', { class: 'choice-tag' });
   const meta = h('span', { class: 'choice-meta' });
   const radio = h('span', { class: 'choice-radio', 'aria-hidden': 'true' });
+  const detailsId = `choice-${role}-${id.replace(/[^\w-]/g, '-')}`;
   const main = h(
     'button',
-    { class: 'choice-main', type: 'button', role: 'radio', 'aria-expanded': 'false', onClick: onToggle },
+    { class: 'choice-main', type: 'button', 'aria-expanded': 'false', 'aria-controls': detailsId, onClick: onToggle },
     radio,
     h('span', { class: 'choice-name' }, name, tag),
     meta,
@@ -287,8 +289,9 @@ function ChoiceRow(role: 'dictation' | 'cleanup', id: string, onToggle: () => vo
   );
   const facts = h('dl', { class: 'facts' });
   const actions = h('div', { class: 'choice-actions' });
-  const details = h('div', { class: 'choice-details' }, h('div', { class: 'choice-details-inner' }, h('p', { class: 'choice-blurb' }, w?.blurb ?? c!.blurb), facts, actions));
-  const el = h('div', { class: 'choice', 'data-id': id }, main, details);
+  const details = h('div', { class: 'choice-details', id: detailsId }, h('div', { class: 'choice-details-inner' }, h('p', { class: 'choice-blurb' }, w?.blurb ?? c!.blurb), facts, actions));
+  details.inert = true;
+  const el = h('div', { class: 'choice', role: 'listitem', 'data-id': id }, main, details);
   let factsKey = '';
 
   return {
@@ -304,7 +307,8 @@ function ChoiceRow(role: 'dictation' | 'cleanup', id: string, onToggle: () => vo
       const recommended = role === 'dictation' ? s.setup?.dictationId === id || s.recommendations?.recommended.modelId === id : s.setup?.cleanupId === id;
       const goal = w ? s.recommendations?.picks.find((p) => p.modelId === id && p.goal !== 'balanced') : undefined;
 
-      main.setAttribute('aria-checked', String(current));
+      if (current) main.setAttribute('aria-current', 'true');
+      else main.removeAttribute('aria-current');
       el.classList.toggle('current', current);
       tag.textContent = recommended ? 'Recommended' : goal ? goal.title : '';
       tag.hidden = !tag.textContent;
@@ -318,7 +322,7 @@ function ChoiceRow(role: 'dictation' | 'cleanup', id: string, onToggle: () => vo
       else metaText = formatBytes(modelSize(id));
       if (installed && !dl) metaText += ' · Downloaded';
       meta.textContent = metaText;
-      main.setAttribute('aria-label', `${name}${tag.textContent ? `, ${tag.textContent}` : ''}, ${metaText}${current ? ', selected' : ''}`);
+      main.setAttribute('aria-label', `${name}${tag.textContent ? `, ${tag.textContent}` : ''}, ${metaText}${current ? ', chosen' : ''}`);
 
       const nextFacts = JSON.stringify([installed, wEst?.device, cEst?.device, s.settings.language]);
       if (nextFacts !== factsKey) {
@@ -388,8 +392,8 @@ function accuracyWords(acc: number) {
 
 // ── The one thing to do next ───────────────────────────────────────────────
 function SetupFoot() {
-  const bar = progressBar();
-  const cancel = h('button', { class: 'btn foot-cancel', type: 'button' }, 'Cancel');
+  const bar = progressBar('Download progress');
+  const cancel = h('button', { class: 'btn foot-cancel', type: 'button', 'aria-label': 'Cancel download' }, 'Cancel');
   const progressNote = h('p', { class: 'foot-note' });
   const progressLine = h('div', { class: 'unfold foot-progress' }, h('div', { class: 'unfold-inner' }, h('div', null, h('div', { class: 'foot-bar' }, bar.el, cancel), progressNote)));
   const primary = h('button', { class: 'btn primary large foot-primary', type: 'button' });

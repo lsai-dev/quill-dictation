@@ -1,9 +1,10 @@
+import { cleanupModelById } from '../../../shared/cleanupModels';
 import { modelById } from '../../../shared/models';
 import { formatLatency } from '../../../shared/recommend';
 import type { AppSnapshot } from '../../../shared/types';
 import { AnyRibbon, createRibbon } from '../../ribbon';
 import { api, subscribe } from '../store';
-import { h, icons, keycaps, relativeTime, svg } from '../ui';
+import { h, icons, keycaps, onMotionChange, reducedMotion, relativeTime, svg } from '../ui';
 import { navigate } from '../router';
 import { UpdateBanner } from './updateBanner';
 
@@ -39,7 +40,8 @@ export function HomeView() {
     try {
       ribbon = createRibbon(canvas, { viewHeight: 2.0, anchorY: 0.5, persistent: true });
       ribbon.setDark(matchMedia('(prefers-color-scheme: dark)').matches);
-      ribbon.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);
+      ribbon.setReducedMotion(reducedMotion());
+      onMotionChange((r) => ribbon?.setReducedMotion(r));
       ribbon.show();
       matchMedia('(prefers-color-scheme: dark)').addEventListener('change', (e) => ribbon?.setDark(e.matches));
       // Only animate while visible — no GPU work for a view you're not looking at.
@@ -126,6 +128,8 @@ function statusText(s: AppSnapshot) {
 
 function renderEngine(el: HTMLElement, s: AppSnapshot) {
   const m = modelById(s.settings.modelId);
+  const c = s.settings.cleanup ? cleanupModelById(s.settings.cleanupModelId) : undefined;
+  const cInstalled = !!c && !!s.models.find((x) => x.id === c.id)?.installed;
   const e = s.engine;
   const est = s.recommendations?.estimates.find((x) => x.modelId === s.settings.modelId);
   let dot = 'idle';
@@ -136,6 +140,10 @@ function renderEngine(el: HTMLElement, s: AppSnapshot) {
     dot = 'ready';
     const where = e.device === 'gpu' ? `on your ${s.hardware?.gpus.find((g) => !g.integrated)?.name ?? 'graphics card'}` : 'on your processor';
     text = `${m.name} is ready ${where}${est ? ` · transcribes ${formatLatency(est.latencySec)}` : ''}`;
+    if (c && cInstalled) {
+      const ce = s.cleanupEngine;
+      text += ce.state === 'ready' ? ` · polished by ${c.name}` : ce.state === 'loading' ? ` · preparing ${c.name}` : ce.state === 'error' ? ` · cleanup paused` : '';
+    } else if (c) text += ' · cleanup needs a download';
   } else if (e.state === 'loading') {
     dot = 'loading';
     text = `Preparing ${m.name}…`;
@@ -172,11 +180,29 @@ function renderHistory(list: HTMLElement, empty: HTMLElement, s: AppSnapshot) {
           copy.classList.remove('done');
         }, 1400);
       });
+      // What cleanup changed stays one click away: the transcript as spoken.
+      let original: HTMLElement | null = null;
+      let reveal: HTMLElement | null = null;
+      if (r.original) {
+        const id = `orig-${r.at}`;
+        original = h('div', { class: 'unfold history-original', id }, h('div', { class: 'unfold-inner' }, h('p', null, h('span', { class: 'history-original-tag' }, 'As spoken'), r.original)));
+        original.inert = true;
+        reveal = h('button', { class: 'link small', type: 'button', 'aria-expanded': 'false', 'aria-controls': id }, 'As spoken');
+        reveal.addEventListener('click', () => {
+          const open = !original!.classList.contains('open');
+          original!.classList.toggle('open', open);
+          original!.inert = !open;
+          reveal!.setAttribute('aria-expanded', String(open));
+          reveal!.textContent = open ? 'Hide' : 'As spoken';
+        });
+      }
+      const timing = `${(r.audioMs / 1000).toFixed(1)} s spoken · ${(r.processMs / 1000).toFixed(2)} s to write${r.cleanup === 'polished' ? ' · polished' : ''}`;
       return h(
         'div',
         { class: 'history-item' },
         h('p', { class: 'history-text' }, r.text),
-        h('div', { class: 'history-meta' }, h('span', null, relativeTime(r.at)), h('span', null, `${(r.audioMs / 1000).toFixed(1)} s spoken · ${(r.processMs / 1000).toFixed(2)} s to write`), copy),
+        original,
+        h('div', { class: 'history-meta' }, h('span', null, relativeTime(r.at)), h('span', null, timing), reveal, copy),
       );
     }),
   );

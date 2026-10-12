@@ -78,9 +78,9 @@ export function disclosure(title: string, content: HTMLElement) {
 }
 
 /** A determinate progress bar (0–1). Only ever shows real progress. */
-export function progressBar() {
+export function progressBar(label = 'Progress') {
   const fill = h('i', { class: 'bar-fill' });
-  const el = h('div', { class: 'bar', role: 'progressbar', 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0' }, fill);
+  const el = h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0' }, fill);
   return {
     el,
     set(p: number, verifying = false) {

@@ -131,7 +131,7 @@ export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
       exampleWrap,
     );
 
-    const bar = progressBar();
+    const bar = progressBar('Download progress');
     const progressNote = h('p', { class: 'ob-progress-note' });
     const progress = h('div', { class: 'unfold ob-progress' }, h('div', { class: 'unfold-inner' }, h('div', null, bar.el, progressNote)));
     const message = h('p', { class: 'ob-error', role: 'alert' });
