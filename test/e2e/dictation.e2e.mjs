@@ -36,16 +36,17 @@ const app = await electron.launch({
 const output = [];
 app.process().stdout?.on('data', (d) => output.push(String(d)));
 app.process().stderr?.on('data', (d) => output.push(String(d)));
+// Diagnostic screenshots are best-effort: the overlay hides itself as a
+// dictation ends, and a capture of a window that hides mid-way never completes.
+const shot = async (page, name) => {
+  if (!shots || !page) return;
+  await page.screenshot({ path: join(shots, name), timeout: 5000 }).catch((e) => console.log(`· ${name} not captured: ${e.message.split('\n')[0]}`));
+};
 const fail = async (msg) => {
   console.error('✗', msg);
   const status = await app.evaluate(() => globalThis.__quill?.engine.status).catch(() => null);
   console.error('  engine status:', JSON.stringify(status));
-  try {
-    const ov = app.windows().find((w) => w.url().includes('overlay.html'));
-    if (shots && ov) await ov.screenshot({ path: join(shots, 'e2e-failure.png') });
-  } catch {
-    /* best effort */
-  }
+  await shot(app.windows().find((w) => w.url().includes('overlay.html')), 'e2e-failure.png');
   console.error('  app log (tail):');
   for (const line of output.join('').split(/\r?\n/).filter((l) => l.trim() && !/dbus|Fontconfig/.test(l)).slice(-60)) console.error('   ', line);
   try {
@@ -99,11 +100,11 @@ await appWin.bringToFront();
 
 await main(() => globalThis.__quill.dictation.start());
 await new Promise((r) => setTimeout(r, 1500));
-if (shots) await overlay.screenshot({ path: join(shots, 'e2e-listening.png') });
+await shot(overlay, 'e2e-listening.png');
 await new Promise((r) => setTimeout(r, Number(process.env.QUILL_LISTEN_MS ?? 10000)));
 await main(() => globalThis.__quill.dictation.finish());
 await new Promise((r) => setTimeout(r, 300));
-if (shots) await overlay.screenshot({ path: join(shots, 'e2e-processing.png') });
+await shot(overlay, 'e2e-processing.png');
 
 const result = await poll(() => main(() => globalThis.__quill.dictation.history[0] ?? null), 180000, 'transcript');
 console.log(`✓ transcript (${result.processMs} ms for ${result.audioMs} ms of audio): "${result.text}"`);
