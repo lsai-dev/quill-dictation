@@ -1,8 +1,8 @@
 import { describe, expect, it } from 'vitest';
-import { chooseDevice, CLEANUP_MAX_LATENCY_SEC, ENGINE_RUNTIME_BYTES, formatLatency, recommend, recommendSetup, shortCpuName, systemBudget } from '../src/shared/recommend';
+import { chooseDevice, CLEANUP_MAX_LATENCY_SEC, cleanupThroughput, ENGINE_RUNTIME_BYTES, formatLatency, recommend, recommendSetup, shortCpuName, systemBudget } from '../src/shared/recommend';
 import { modelById } from '../src/shared/models';
 import { cleanupModelById, cleanupSupports } from '../src/shared/cleanupModels';
-import { MACHINES } from './fixtures';
+import { machine, MACHINES } from './fixtures';
 
 const pick = (set: ReturnType<typeof recommend>, goal: string) => set.picks.find((p) => p.goal === goal)!;
 
@@ -172,5 +172,26 @@ describe('dictation + cleanup setup', () => {
     expect(systemBudget(MACHINES.budgetLaptop)).toBeLessThan(1.6 * GiB);
     expect(systemBudget(MACHINES.ultrabook)).toBeGreaterThan(5 * GiB);
     expect(systemBudget(MACHINES.ultrabook)).toBeLessThan(11.3 * GiB);
+  });
+});
+
+describe('cleanup speed model', () => {
+  // Measured by `npm run eval:cleanup` in CI (run 27): Intel Xeon Platinum 8573C,
+  // 2 cores / 4 threads, 4 inference threads, generation speed including drafting.
+  const ciRunner = machine({ cores: 2, threads: 4, ramGb: 16, avx512: true, brand: 'INTEL(R) XEON(R) PLATINUM 8573C' });
+  const measured: Record<string, number> = { 's1-mini': 65.4, 'qwen3.5-2b': 21.5, 'granite-4.0-micro': 12.4, 'qwen3.5-4b': 10.1 };
+
+  it('predicts measured generation speed within 35%, erring slow', () => {
+    for (const [id, tokPerSec] of Object.entries(measured)) {
+      const est = cleanupThroughput(cleanupModelById(id)!, ciRunner, 'cpu').decode;
+      console.log(`${id.padEnd(18)} measured ${tokPerSec} tok/s · estimated ${est.toFixed(1)} tok/s`);
+      expect(est / tokPerSec).toBeGreaterThan(0.65);
+      expect(est / tokPerSec).toBeLessThan(1.2);
+    }
+  });
+
+  it('ranks the models by speed the way the measurements do', () => {
+    const order = Object.keys(measured).sort((a, b) => cleanupThroughput(cleanupModelById(b)!, ciRunner, 'cpu').decode - cleanupThroughput(cleanupModelById(a)!, ciRunner, 'cpu').decode);
+    expect(order).toEqual(Object.keys(measured).sort((a, b) => measured[b] - measured[a]));
   });
 });

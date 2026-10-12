@@ -237,24 +237,47 @@ export function shortCpuName(brand: string): string {
  * A cleanup model generates text one token at a time, and each token reads every
  * weight once — so on a processor its speed is set mostly by memory bandwidth, and
  * on a graphics card by video-memory bandwidth. Reading the prompt is compute-bound.
- * Constants are calibrated against published llama.cpp measurements (see
- * docs/cleanup-models.md): a Ryzen 9 3900X decodes a 2.1 GB Q4 model at ≈17 tok/s
- * (≈36 GB/s effective) and Qwen3.5 0.8B at ≈44 tok/s.
+ *
+ * Calibrated against Quill's own measurements of the catalog on real hardware (CI,
+ * `npm run eval:cleanup`; see docs/cleanup-models.md): on a 2-core/4-thread Xeon,
+ * Qwen3.5 2B decodes at 21.5 tok/s, Qwen3.5 4B at 10.1, S1-mini at 65 and Granite 4.0
+ * Micro at 12.4 (both with drafting), and prompts are read at ≈150 GFLOP/s. Memory
+ * bandwidth barely depends on core count, compute does — which is why drafting (which
+ * spends compute to save bandwidth) pays off for small models and on graphics cards,
+ * and much less for 3B models on a few cores.
  *
  * Both models stay loaded, so they must fit together — plus each engine's runtime
  * and room for everything else you run.
  */
 const CPU_BANDWIDTH = 32e9; // bytes/s, reference desktop, effective
-const CPU_FLOPS = 700e9; // effective prompt-processing throughput of the reference CPU
-const TOKEN_OVERHEAD_SEC = 0.006;
+const CPU_FLOPS = 480e9; // effective prompt-processing throughput of the reference CPU
+const TOKEN_OVERHEAD_SEC = 0.003;
 const CLEANUP_PROMPT_TOKENS = 60; // a 10 s dictation in its prompt wrapper (the instructions are cached)
 const CLEANUP_OUTPUT_TOKENS = 45;
 const CLEANUP_FIXED_SEC = 0.05;
-/** Drafting from the transcript (dense models only) cuts the number of decoding steps. */
-const DRAFT_SPEEDUP = { cpu: 2.0, gpu: 2.5 };
 /** Each inference engine's own footprint: process, runtime and scratch buffers. */
 export const ENGINE_RUNTIME_BYTES = 180 * MiB;
 const GPU_CONTEXT_BYTES = 250 * MiB;
+
+/** Estimated throughput of a cleanup model: prompt reading and (drafted) generation, in tokens/s. */
+export function cleanupThroughput(m: CleanupModelSpec, hw: HardwareProfile, device: 'gpu' | 'cpu', gpu?: GpuInfo) {
+  const flopsPerToken = 2 * m.params;
+  if (device === 'gpu' && gpu) {
+    const decodeSec = m.sizeBytes / gpuBandwidth(gpu) + 0.004;
+    // Checking a draft costs a GPU almost nothing beyond reading the weights once.
+    const draft = m.architecture === 'dense' ? 2.5 : 1;
+    return { prompt: (CPU_FLOPS * gpuSpeed(gpu) * 3) / flopsPerToken, decode: draft / decodeSec };
+  }
+  const f = Math.max(0.05, cpuSpeed(hw));
+  const bandwidth = CPU_BANDWIDTH * Math.min(1.15, Math.max(0.5, Math.pow(f, 0.15)));
+  const readSec = m.sizeBytes / bandwidth;
+  const decodeSec = readSec + TOKEN_OVERHEAD_SEC / Math.max(0.3, f);
+  const computeSec = flopsPerToken / (CPU_FLOPS * f);
+  // Drafting trades compute for bandwidth: worth more the more reading dominates.
+  // (Fitted to the measurements: ×1.66 for S1-mini and ×1.04 for Granite on 2 cores.)
+  const draft = m.architecture === 'dense' ? Math.min(2.5, Math.max(1, readSec / computeSec - 1)) : 1;
+  return { prompt: (CPU_FLOPS * f) / flopsPerToken, decode: draft / decodeSec };
+}
 
 /** Memory Quill's models may use together, after leaving room for the system and your apps. */
 export function systemBudget(hw: HardwareProfile): number {
@@ -283,17 +306,8 @@ export function cleanupCpuSupported(hw: HardwareProfile): boolean {
 }
 
 export function cleanupLatency(m: CleanupModelSpec, hw: HardwareProfile, device: 'gpu' | 'cpu', gpu?: GpuInfo): number {
-  const draft = m.architecture === 'dense' ? DRAFT_SPEEDUP[device] : 1;
-  if (device === 'gpu' && gpu) {
-    const perToken = m.sizeBytes / gpuBandwidth(gpu) + 0.004;
-    const prompt = (CLEANUP_PROMPT_TOKENS * 2 * m.params) / (CPU_FLOPS * gpuSpeed(gpu) * 3);
-    return prompt + (CLEANUP_OUTPUT_TOKENS * perToken) / draft + CLEANUP_FIXED_SEC;
-  }
-  const f = Math.max(0.05, cpuSpeed(hw));
-  const bandwidth = CPU_BANDWIDTH * Math.min(1.25, Math.max(0.35, Math.sqrt(f)));
-  const perToken = m.sizeBytes / bandwidth + TOKEN_OVERHEAD_SEC / Math.max(0.3, f);
-  const prompt = (CLEANUP_PROMPT_TOKENS * 2 * m.params) / (CPU_FLOPS * f);
-  return prompt + (CLEANUP_OUTPUT_TOKENS * perToken) / draft + CLEANUP_FIXED_SEC;
+  const t = cleanupThroughput(m, hw, device, gpu);
+  return CLEANUP_PROMPT_TOKENS / t.prompt + CLEANUP_OUTPUT_TOKENS / t.decode + CLEANUP_FIXED_SEC;
 }
 
 function cleanupScore(m: CleanupModelSpec, e: CleanupEstimate, budget: number): number {

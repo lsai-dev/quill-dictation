@@ -53,8 +53,8 @@ export function CleanupExample() {
       }),
     );
     still.replaceChildren(
-      h('p', { class: 'still-before' }, h('span', { class: 'still-tag' }, 'You say'), ...EXAMPLES[lang].filter((k) => k.kind !== 'add').map((k, i, a) => h('span', { class: k.kind === 'drop' ? 'struck' : '' }, k.t + (i < a.length - 1 ? ' ' : '')))),
-      h('p', { class: 'still-after' }, h('span', { class: 'still-tag' }, 'Quill writes'), text(EXAMPLES[lang], true)),
+      h('p', { class: 'still-before' }, h('span', { class: 'still-tag' }, 'You say'), h('span', null, ...EXAMPLES[lang].filter((k) => k.kind !== 'add').map((k, i, a) => h('span', { class: k.kind === 'drop' ? 'struck' : '' }, k.t + (i < a.length - 1 ? ' ' : ''))))),
+      h('p', { class: 'still-after' }, h('span', { class: 'still-tag' }, 'Quill writes'), h('span', null, text(EXAMPLES[lang], true))),
     );
     spoken.textContent = `For example, you say: “${text(EXAMPLES[lang], false)}” and Quill writes: “${text(EXAMPLES[lang], true)}”`;
     requestAnimationFrame(measure);

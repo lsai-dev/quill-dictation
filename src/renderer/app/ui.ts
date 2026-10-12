@@ -182,3 +182,22 @@ export function reducedMotion(): boolean {
 export function onMotionChange(cb: (reduced: boolean) => void) {
   window.addEventListener('quill:motion', (e) => cb((e as CustomEvent<boolean>).detail));
 }
+
+const fading = new WeakMap<Element, number>();
+
+/** Fade elements out, change them, fade them back in — interruptible, and instant with reduced motion. */
+export function crossfade(els: HTMLElement[], change: () => void) {
+  if (reducedMotion()) {
+    change();
+    return;
+  }
+  for (const e of els) {
+    clearTimeout(fading.get(e));
+    e.classList.add('fade-out');
+  }
+  const t = window.setTimeout(() => {
+    change();
+    for (const e of els) e.classList.remove('fade-out');
+  }, 140);
+  for (const e of els) fading.set(e, t);
+}

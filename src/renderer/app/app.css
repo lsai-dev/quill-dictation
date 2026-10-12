@@ -286,7 +286,8 @@ html[data-platform="darwin"] .sidebar { padding-top: 56px; }
 .role-name { font: 600 13px/1.3 var(--text-font); color: var(--text-2); letter-spacing: 0.01em; }
 .role-what { color: var(--text-3); font-size: 13px; }
 .role-model { display: flex; align-items: baseline; flex-wrap: wrap; column-gap: 10px; margin-top: 3px; }
-.role-model-name, .role-model-meta { transition: color 300ms var(--ease); }
+.role-model-name, .role-model-meta { transition: color 300ms var(--ease), opacity 140ms var(--ease); }
+.fade-out { opacity: 0 !important; }
 .role-model-name { font: 600 18px/1.3 var(--display); letter-spacing: -0.012em; }
 .role-model-meta { color: var(--text-2); font-size: 13px; font-variant-numeric: tabular-nums; }
 .role.downloading .role-model-meta { color: var(--accent-text); }
@@ -352,7 +353,8 @@ html[data-platform="darwin"] .sidebar { padding-top: 56px; }
 .morph-replay { position: absolute; top: 9px; right: 9px; opacity: 0; transition: opacity 220ms var(--ease); }
 .example[data-phase="clean"] .morph-replay, .example:hover .morph-replay, .morph-replay:focus-visible { opacity: 1; }
 .morph-still { display: none; font-size: 14.5px; line-height: 1.5; }
-.still-tag { display: inline-block; min-width: 96px; font-size: 11.5px; font-weight: 600; color: var(--text-3); }
+.morph-still p { display: grid; grid-template-columns: 96px minmax(0, 1fr); align-items: baseline; }
+.still-tag { font-size: 11.5px; font-weight: 600; color: var(--text-3); }
 .still-before { color: var(--text-2); }
 .still-before .struck { text-decoration: line-through; color: var(--text-3); }
 .still-after { margin-top: 4px; }

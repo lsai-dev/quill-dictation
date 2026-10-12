@@ -4,7 +4,7 @@ import { formatLatency, recommendSetup } from '../../../shared/recommend';
 import type { AppSnapshot, CleanupEstimate, ModelEstimate } from '../../../shared/types';
 import { addsLatency, downloadLabel, etaText, modelName, modelSize, setupState, type SetupState } from '../setup';
 import { api, snapshot, subscribe } from '../store';
-import { disclosure, h, icons, progressBar, svg, toggle } from '../ui';
+import { crossfade, disclosure, h, icons, progressBar, svg, toggle } from '../ui';
 import { CleanupExample } from './example';
 
 /**
@@ -167,10 +167,18 @@ function RoleRow(role: 'dictation' | 'cleanup', title: string, what: string, ico
     side,
     change,
     set(model: string, detail: string, d: AppSnapshot['downloads'][number] | null) {
-      if (name.textContent !== model) name.textContent = model;
       const text = d ? (d.state === 'verifying' ? 'Verifying…' : `Downloading · ${Math.floor((d.received / Math.max(1, d.total)) * 100)}%`) : detail;
-      if (meta.textContent !== text) meta.textContent = text;
+      // Progress ticks update in place; a change of model or of state cross-fades.
+      const kindChanged = el.classList.contains('downloading') !== !!d || name.textContent !== model;
       el.classList.toggle('downloading', !!d);
+      if (kindChanged && name.textContent) crossfade([name, meta], () => {
+        name.textContent = model;
+        meta.textContent = text;
+      });
+      else {
+        if (name.textContent !== model) name.textContent = model;
+        if (meta.textContent !== text) meta.textContent = text;
+      }
     },
   };
 }
@@ -243,9 +251,19 @@ function Choices(role: 'dictation' | 'cleanup') {
     const row = rows.find((r) => r.id === selected)?.el;
     if (!row || !el.classList.contains('open')) {
       marker.style.opacity = '0';
+      marker.dataset.shown = '';
       return;
     }
     const main = row.querySelector('.choice-main') as HTMLElement;
+    // Appear where the selection is; glide only when the selection moves.
+    if (!marker.dataset.shown) {
+      marker.style.transition = 'none';
+      marker.style.transform = `translateY(${row.offsetTop}px)`;
+      marker.style.height = `${main.offsetHeight}px`;
+      void marker.offsetWidth;
+      marker.style.transition = '';
+      marker.dataset.shown = '1';
+    }
     marker.style.opacity = '1';
     marker.style.transform = `translateY(${row.offsetTop}px)`;
     marker.style.height = `${main.offsetHeight}px`;

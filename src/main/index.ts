@@ -1,6 +1,6 @@
 import { app, clipboard, ipcMain, nativeTheme, session, shell } from 'electron';
 import { IPC } from '../shared/ipc';
-import { cleanupModelById } from '../shared/cleanupModels';
+import { cleanupModelById, cleanupSupports } from '../shared/cleanupModels';
 import { modelById } from '../shared/models';
 import { recommend, recommendSetup } from '../shared/recommend';
 import type { AppSnapshot, HardwareProfile, RecommendationSet, Settings, SetupRecommendation } from '../shared/types';
@@ -164,7 +164,8 @@ async function main() {
   async function loadCleanup() {
     const s = settings.get();
     const id = s.cleanupModelId;
-    if (!s.cleanup || !id || !downloads.isInstalled(id) || !cleanup.available) {
+    const spec = cleanupModelById(id);
+    if (!s.cleanup || !id || !spec || !downloads.isInstalled(id) || !cleanup.available || !cleanupSupports(spec, s.language)) {
       if (cleanup.status.state !== 'idle') await cleanup.unload();
       return;
     }
@@ -172,7 +173,6 @@ async function main() {
     // The engine is built for AVX2/NEON processors; never start it where it can't run.
     if (hardware && !hardware.cpu.avx2 && !hardware.cpu.neon && est?.device !== 'gpu') return;
     await rendererKnown;
-    cleanup.setLanguage(s.language);
     try {
       await cleanup.ensure(id, downloads.pathFor(id)!, est?.device === 'gpu' && s.engine !== 'cpu' ? 'gpu' : 'cpu');
     } catch (e) {
@@ -213,8 +213,14 @@ async function main() {
     if (next.hotkey !== prev.hotkey) await hotkey.apply(next.hotkey);
     if (next.language !== prev.language || next.engine !== prev.engine || next.modelId !== prev.modelId) plan();
     if (next.modelId !== prev.modelId || next.engine !== prev.engine) void loadModel();
-    if (next.cleanup !== prev.cleanup || next.cleanupModelId !== prev.cleanupModelId || next.engine !== prev.engine) void loadCleanup();
-    if (next.language !== prev.language) cleanup.setLanguage(next.language);
+    if (next.cleanup !== prev.cleanup || next.cleanupModelId !== prev.cleanupModelId || next.engine !== prev.engine || next.language !== prev.language) void loadCleanup();
+    if (next.language !== prev.language) {
+      // A cleanup model that doesn't handle the new language gives way to one that does,
+      // if it's already here; otherwise Models asks for the download.
+      const current = cleanupModelById(next.cleanupModelId);
+      const alt = setup?.cleanupId ?? setup?.cleanupFallbackId;
+      if (current && !cleanupSupports(current, next.language) && alt && downloads.isInstalled(alt)) settings.update({ cleanupModelId: alt });
+    }
     if (next.launchAtLogin !== prev.launchAtLogin) applyLoginItem(next.launchAtLogin);
     if (next.motion !== prev.motion) overlay.send({ type: 'theme', ...theme() });
     broadcast();
@@ -231,9 +237,9 @@ async function main() {
   function adopt(id: string) {
     const s = settings.get();
     if (modelById(id) && (!s.modelId || !downloads.isInstalled(s.modelId))) settings.update({ modelId: id });
-    if (cleanupModelById(id) && (!s.cleanupModelId || !downloads.isInstalled(s.cleanupModelId) || s.cleanupModelId === id)) {
-      settings.update({ cleanupModelId: id, cleanup: true });
-    }
+    const current = cleanupModelById(s.cleanupModelId);
+    const unusable = !current || !downloads.isInstalled(current.id) || !cleanupSupports(current, s.language);
+    if (cleanupModelById(id) && (unusable || s.cleanupModelId === id)) settings.update({ cleanupModelId: id, cleanup: true });
   }
 
   // A setup (dictation, then cleanup) downloads one model at a time; cancelling one stops the rest.

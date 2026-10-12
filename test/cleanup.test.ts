@@ -113,15 +113,18 @@ describe('prompts', () => {
     expect(p.prefix.filter((s) => s.special).every((s) => /^<\|?\/?[a-z_]+\|?>$/.test(s.text))).toBe(true);
   });
 
-  it('anchors other languages with their own examples and a no-translation rule', () => {
-    const es = [...buildCleanupPrompt('qwen', 'hola', 'es').prefix].map((x) => x.text).join('');
-    expect(es).toContain('The transcript is in Spanish');
-    expect(es).toContain('Creo que deberíamos mover la reunión al jueves.');
-    expect(es).not.toContain('move the meeting to Thursday');
-    const de = [...buildCleanupPrompt('granite', 'hallo', 'de').prefix].map((x) => x.text).join('');
-    expect(de).toContain('The transcript is in German');
-    const en = [...buildCleanupPrompt('qwen', 'hi', 'en').prefix].map((x) => x.text).join('');
-    expect(en).not.toContain('The transcript is in');
+  it('names the language per request, so one cached prefix serves every language', () => {
+    const es = buildCleanupPrompt('qwen', 'hola', 'es');
+    const en = buildCleanupPrompt('qwen', 'hi', 'en');
+    expect(es.prefix).toEqual(en.prefix);
+    expect(buildCleanupPrompt('granite', 'x', 'de').prefix).toEqual(buildCleanupPrompt('granite', 'y', 'es').prefix);
+    const prefix = es.prefix.map((x) => x.text).join('');
+    expect(prefix).toContain('Language: Spanish');
+    expect(prefix).toContain('Creo que deberíamos mover la reunión al jueves.');
+    expect(prefix).toContain('never translate');
+    expect(es.prompt.map((x) => x.text).join('')).toContain('Language: Spanish\n<transcript>\nhola\n</transcript>');
+    expect(buildCleanupPrompt('granite', 'hallo', 'de').prompt.map((x) => x.text).join('')).toContain('Language: German');
+    expect(buildCleanupPrompt('qwen', 'x', 'auto').prompt.map((x) => x.text).join('')).not.toContain('Language:');
   });
 
   it('uses Granite role markers', () => {

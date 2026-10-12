@@ -285,6 +285,7 @@ export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
       if (dl) wait.textContent = `Your model is still downloading (${Math.floor((dl.received / Math.max(1, dl.total)) * 100)}%). Dictation will work as soon as it finishes.`;
       else if (!id) wait.textContent = 'Choose a model first — you can do this any time in Models.';
       else if (snap.engine.state === 'loading') wait.textContent = 'Getting the model ready…';
+      else if (snap.settings.cleanup && snap.cleanupEngine.state === 'ready') wait.textContent = 'Cleanup is on: Quill will tidy fillers and punctuation before inserting.';
       else wait.textContent = '';
       if (snap.history.length && !area.value) area.value = snap.history[0].text;
     });
