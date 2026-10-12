@@ -84,6 +84,13 @@ jobs:
         run: |
           npm run build
           if [[ "$GITHUB_REF" == refs/tags/v* || "$RELEASE" == "true" ]]; then PUBLISH=always; else PUBLISH=never; fi
+          if [[ "$PUBLISH" == always && "$GITHUB_REF" != refs/tags/v* ]]; then
+            # A manual release: tag the commit being built first, or GitHub would
+            # tag the tip of the default branch instead.
+            TAG="v$(node -p "require('./package.json').version")"
+            gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" > /dev/null 2>&1 \
+              || gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
+          fi
           npx electron-builder --win --x64 --publish "$PUBLISH"
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
