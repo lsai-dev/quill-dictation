@@ -140,9 +140,20 @@ corrections. Qwen3.5 4B polished or correctly left alone every case.
 
 These numbers also exposed a cost: a prompt prefix per language had to be re-read
 whenever the language changed (13–34 s on this CPU), which would hurt bilingual users
-dictating with *Detect automatically*. The cached instructions are now
-language-neutral: English and Spanish examples together, each labelled, with the
-language named in each request.
+dictating with *Detect automatically*.
+
+**Tried and measured, then reverted** (run 28): one language-neutral prefix, with
+English and Spanish examples interleaved and the language named in each request. It
+removed the switching cost but cost quality. Granite translated three Spanish cases
+instead of one, and Qwen3.5 4B once obeyed *"translate this sentence into Spanish"*.
+The guard caught every one, so nothing unsafe passed, but fewer dictations were
+polished.
+
+**What Quill does instead:** per-language prompts (the run 27 design, which measured
+best) plus a sidecar that keeps state snapshots of the two most recently used
+instruction prefixes. Switching between English and Spanish restores a snapshot in
+milliseconds instead of re-reading the instructions. With *Detect automatically*, both
+are prepared when the model loads.
 
 The latest results are in the *Cleanup quality* job of each CI run (and its
 `cleanup-eval` artifact).
@@ -179,8 +190,10 @@ so inference never touches the UI thread and a crash can't take Quill with it. T
 techniques keep it quick:
 
 1. **Cached instructions.** The prompt prefix (instructions and examples, about 600–900
-   tokens) is evaluated once when the model loads. Dense models keep that KV cache and
-   trim back to it. Hybrid models (Qwen3.5) restore a state snapshot.
+   tokens, one per language) is evaluated once when the model loads. Dense models keep
+   that KV cache and trim back to it. The two most recent prefixes are also kept as state
+   snapshots, which is how hybrid models (Qwen3.5) come back to them and how any model
+   switches language instantly. A cancelled request leaves the cache intact.
 2. **Prompt-lookup drafting** (dense models). A cleaned transcript is mostly the
    transcript, so the sidecar proposes the next tokens by matching what it has written
    against the transcript. The model then checks the whole proposal in one batch. With

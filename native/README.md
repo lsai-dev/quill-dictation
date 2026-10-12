@@ -145,9 +145,11 @@ takes effect between two decoding steps (milliseconds). Requests are handled in 
 * **Segments** are `{"text": "...", "special": bool}`. Special segments are tokenized
   with control-token parsing (chat-template markers); others never are, so text from a
   transcript can't forge a turn.
-* **Prefix caching**: `prefix` (instructions + examples) is evaluated once and reused
-  while it's unchanged — by trimming the KV cache back to it for dense models, or by
-  restoring a state snapshot for recurrent/hybrid models (which can't trim).
+* **Prefix caching**: `prefix` (instructions + examples) is evaluated once and reused —
+  by trimming the KV cache back to it (dense models), or by restoring a state snapshot.
+  Snapshots of the two most recently used prefixes are kept, so alternating between two
+  (e.g. one per dictation language) never re-evaluates either; recurrent/hybrid models,
+  which can't trim, always come back through their snapshot.
   `QUILL_CLEANUP_SNAPSHOT=1` forces the snapshot path (tests).
 * **Decoding** is greedy. For dense models, drafts are proposed by matching the output
   against `lookup` (prompt-lookup decoding) and verified in one batch; rejected tokens

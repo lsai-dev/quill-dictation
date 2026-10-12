@@ -251,11 +251,21 @@ fn resolve_threads(requested: u32) -> i32 {
     (logical / 2).clamp(1, 8) as i32
 }
 
-/// The cached instruction prefix for the loaded model.
-struct Prefix {
-    tokens: Vec<LlamaToken>,
-    /// For models that can't rewind (recurrent/hybrid): the state right after the prefix.
-    snapshot: Option<SeqState>,
+/// How many instruction prefixes are kept ready (one per dictation language in use).
+const SAVED_PREFIXES: usize = 2;
+
+/// The instruction prefixes evaluated so far for the loaded model.
+///
+/// The one in the context right now can be reused by trimming the KV cache back to it
+/// (dense models). Others are kept as state snapshots and restored in milliseconds, so
+/// alternating between, say, English and Spanish never re-reads the instructions.
+/// Recurrent/hybrid models can't trim, so for them the snapshot is always the way back.
+#[derive(Default)]
+struct Prefixes {
+    /// Tokens of the prefix at the start of sequence 0 (valid up to their length).
+    current: Option<Vec<LlamaToken>>,
+    /// Most recently used first.
+    saved: Vec<(Vec<LlamaToken>, SeqState)>,
 }
 
 struct Session<'m> {
@@ -263,7 +273,7 @@ struct Session<'m> {
     ctx: LlamaContext<'m>,
     batch: LlamaBatch<'static>,
     recurrent: bool,
-    prefix: Option<Prefix>,
+    prefixes: Prefixes,
     gpu: bool,
     device: String,
     path: PathBuf,
@@ -306,7 +316,7 @@ fn serve(
         ctx,
         batch: LlamaBatch::new(N_BATCH as usize, 1),
         recurrent,
-        prefix: None,
+        prefixes: Prefixes::default(),
         gpu,
         device: device.clone(),
         path: args.model.clone(),
@@ -353,7 +363,7 @@ fn serve(
                     model: Some(s.path.display().to_string()),
                     gpu: s.gpu,
                     device: Some(s.device.clone()),
-                    prefix_tokens: s.prefix.as_ref().map_or(0, |p| p.tokens.len()),
+                    prefix_tokens: s.prefixes.current.as_ref().map_or(0, Vec::len),
                 };
                 let _ = out.reply_ok(&req.id, info);
             }
@@ -377,7 +387,7 @@ fn serve(
                     // trims back to it); after a real failure, start from a clean slate.
                     if e != CANCELLED {
                         log!("clean failed: {e}");
-                        s.prefix = None;
+                        s.prefixes = Prefixes::default();
                     }
                 }
                 reply(out, &req.id, result);
@@ -427,31 +437,38 @@ fn argmax(logits: &[f32]) -> LlamaToken {
 }
 
 impl<'m> Session<'m> {
-    /// Makes the context hold exactly `tokens` (the instruction prefix) in sequence 0.
+    /// Makes sequence 0 hold exactly `tokens` (an instruction prefix), reusing earlier
+    /// work where it can. Returns how many of those tokens didn't need evaluating.
     fn ensure_prefix(&mut self, tokens: &[LlamaToken], cancelled: &dyn Fn() -> bool) -> Result<usize, String> {
-        if let Some(p) = &self.prefix {
-            if p.tokens == tokens {
-                let restored = match &p.snapshot {
-                    Some(snap) => {
-                        self.ctx.clear_kv_cache();
-                        self.ctx.state_seq_set(snap, 0).is_ok()
-                    }
-                    None => self.ctx.kv_cache_seq_rm(0, Some(tokens.len() as u32), None).is_ok(),
-                };
-                if restored {
-                    return Ok(tokens.len());
-                }
+        // Already in the context: trim whatever followed it (dense models only).
+        if !self.recurrent && self.prefixes.current.as_deref() == Some(tokens) {
+            if self.ctx.kv_cache_seq_rm(0, Some(tokens.len() as u32), None).is_ok() {
+                return Ok(tokens.len());
             }
         }
-        self.prefix = None;
+        // Seen before: restore its snapshot.
+        if let Some(i) = self.prefixes.saved.iter().position(|(t, _)| t == tokens) {
+            let entry = self.prefixes.saved.remove(i);
+            self.ctx.clear_kv_cache();
+            let restored = self.ctx.state_seq_set(&entry.1, 0).is_ok();
+            self.prefixes.saved.insert(0, entry);
+            if restored {
+                self.prefixes.current = Some(tokens.to_vec());
+                return Ok(tokens.len());
+            }
+            self.prefixes.saved.remove(0);
+        }
+        // New: evaluate it once and keep a snapshot.
+        self.prefixes.current = None;
         self.ctx.clear_kv_cache();
         self.decode_prompt(tokens, 0, cancelled)?;
-        let snapshot = if self.recurrent {
-            Some(self.ctx.state_seq_get(0, LlamaStateSeqFlags::empty()).map_err(|e| format!("could not save the prompt state: {e}"))?)
-        } else {
-            None
-        };
-        self.prefix = Some(Prefix { tokens: tokens.to_vec(), snapshot });
+        let snapshot = self
+            .ctx
+            .state_seq_get(0, LlamaStateSeqFlags::empty())
+            .map_err(|e| format!("could not save the prompt state: {e}"))?;
+        self.prefixes.saved.insert(0, (tokens.to_vec(), snapshot));
+        self.prefixes.saved.truncate(SAVED_PREFIXES);
+        self.prefixes.current = Some(tokens.to_vec());
         Ok(0)
     }
 

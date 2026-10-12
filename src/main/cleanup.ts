@@ -52,6 +52,8 @@ export class CleanupEngine extends EventEmitter {
   private loading: Promise<void> | null = null;
   private gpuFailures = 0;
   private threads = 0;
+  /** Languages whose instructions to keep ready (the setting, or English and Spanish for "detect"). */
+  private languages: string[] = ['en'];
 
   /** The `clean` request in flight, so it can be cancelled. */
   private active: number | null = null;
@@ -70,6 +72,23 @@ export class CleanupEngine extends EventEmitter {
 
   setThreads(n: number) {
     this.threads = n;
+  }
+
+  /** Prepares the instructions for the dictation language(s), in the background. */
+  setLanguage(language: string) {
+    const next = language === 'auto' ? ['en', 'es'] : [language];
+    if (next.join() === this.languages.join()) return;
+    this.languages = next;
+    if (this.ready) void this.prime().catch(() => undefined);
+  }
+
+  private async prime() {
+    const spec = cleanupModelById(this.loaded?.modelId ?? this.wanted?.modelId);
+    if (!spec || !this.proc) return;
+    for (const lang of this.languages) {
+      if (!cleanupSupports(spec, lang)) continue;
+      await this.proc.request('prime', { prefix: cleanupPrefix(spec, lang) }, undefined, 300000);
+    }
   }
 
   get modelId() {
@@ -124,9 +143,8 @@ export class CleanupEngine extends EventEmitter {
     const started = Date.now();
     await this.proc!.request('load', { model: t.path, gpu: t.device === 'gpu', threads: this.threads, ctx: 4096 }, undefined, 180000);
     // Read the instructions once now, so the first dictation only pays for itself.
-    const spec = cleanupModelById(t.modelId);
-    if (spec) await this.proc!.request('prime', { prefix: cleanupPrefix(spec) }, undefined, 300000);
     this.loaded = t;
+    await this.prime();
     const loadMs = Date.now() - started;
     log.info(`cleanup: loaded ${t.modelId} on ${t.device} in ${loadMs} ms`);
     this.setStatus({ state: 'ready', modelId: t.modelId, device: t.device, loadMs });

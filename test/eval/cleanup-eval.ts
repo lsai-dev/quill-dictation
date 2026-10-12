@@ -103,7 +103,8 @@ async function evaluate(m: CleanupModelSpec) {
   await p.request('load', { model: path, threads, ctx: 4096 }, undefined, 300000);
   const loadMs = Date.now() - t0;
   const t1 = Date.now();
-  await p.request('prime', { prefix: cleanupPrefix(m) }, undefined, 600000);
+  // As in the app with "Detect automatically": both languages' instructions ready.
+  for (const lang of ['en', 'es']) if (cleanupSupports(m, lang)) await p.request('prime', { prefix: cleanupPrefix(m, lang) }, undefined, 600000);
   const primeMs = Date.now() - t1;
   const results: CaseResult[] = [];
   for (const c of CASES.filter((x) => cleanupSupports(m, x.lang))) {

@@ -173,6 +173,7 @@ async function main() {
     // The engine is built for AVX2/NEON processors; never start it where it can't run.
     if (hardware && !hardware.cpu.avx2 && !hardware.cpu.neon && est?.device !== 'gpu') return;
     await rendererKnown;
+    cleanup.setLanguage(s.language);
     try {
       await cleanup.ensure(id, downloads.pathFor(id)!, est?.device === 'gpu' && s.engine !== 'cpu' ? 'gpu' : 'cpu');
     } catch (e) {
@@ -215,6 +216,7 @@ async function main() {
     if (next.modelId !== prev.modelId || next.engine !== prev.engine) void loadModel();
     if (next.cleanup !== prev.cleanup || next.cleanupModelId !== prev.cleanupModelId || next.engine !== prev.engine || next.language !== prev.language) void loadCleanup();
     if (next.language !== prev.language) {
+      cleanup.setLanguage(next.language);
       // A cleanup model that doesn't handle the new language gives way to one that does,
       // if it's already here; otherwise Models asks for the download.
       const current = cleanupModelById(next.cleanupModelId);

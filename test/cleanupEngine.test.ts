@@ -65,6 +65,19 @@ describe.skipIf(!bin)('cleanup sidecar', () => {
     expect(r.cached_tokens).toBe(primed.prefix_tokens);
   });
 
+  it('keeps two languages ready: switching between them never re-reads the instructions', async () => {
+    const other = [seg('<|im_start|>', true), seg('system\nLimpias texto dictado.'), seg('<|im_end|>', true), seg('\n')];
+    const run = (pre: typeof prefix) => p.request<Cleaned>('clean', { prefix: pre, prompt: prompt('hola'), lookup: '', max_tokens: 8 });
+    const first = await run(other);
+    expect(first.cached_tokens).toBe(0); // new: read once
+    const back = await run(prefix);
+    const again = await run(other);
+    expect(back.cached_tokens).toBeGreaterThan(0);
+    expect(again.cached_tokens).toBeGreaterThan(0);
+    // Restored, not recomputed: the same output as the first time.
+    expect(again.text).toBe(first.text);
+  });
+
   it('drafting from the transcript never changes the result, only the speed', async () => {
     const plain = await clean('so um we should go', '');
     expect(plain.stop).toBe('limit');
