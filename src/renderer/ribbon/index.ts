@@ -68,6 +68,8 @@ export class AnyRibbon {
   get renderer() { return this.impl.renderer; }
   get reducedMotion() { return this.impl.reducedMotion; }
   get usingFallback() { return this.impl instanceof FallbackRibbon; }
+  /** True when drawing costs CPU time (software WebGL or the SVG fallback). */
+  get software() { return this.impl instanceof FallbackRibbon || this.impl.renderer.software; }
   set manual(v: boolean) { this.impl.manual = v; }
 
   setDark(d: boolean) { this.dark = d; this.impl.setDark(d); }

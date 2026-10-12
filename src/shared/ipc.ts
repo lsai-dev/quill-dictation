@@ -9,6 +9,7 @@ export const IPC = {
   overlayMicError: 'overlay:mic-error',
   overlayHidden: 'overlay:hidden',
   overlayReady: 'overlay:ready',
+  overlayRenderer: 'overlay:renderer',
 
   // app window ↔ main
   snapshot: 'app:snapshot',

@@ -17,6 +17,7 @@ const api = {
   hover: (on: boolean) => ipcRenderer.send(IPC.overlayHover, on),
   micError: (msg: string) => ipcRenderer.send(IPC.overlayMicError, msg),
   hidden: () => ipcRenderer.send(IPC.overlayHidden),
+  rendererInfo: (info: { software: boolean }) => ipcRenderer.send(IPC.overlayRenderer, info),
 };
 
 contextBridge.exposeInMainWorld('quillOverlay', api);

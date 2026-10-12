@@ -186,6 +186,8 @@ function handle(c: OverlayCommand) {
 if (api) {
   api.onCommand(handle);
   api.ready();
+  // Lets the engine leave CPU headroom when the ribbon is drawn in software.
+  api.rendererInfo({ software: ribbon.software });
 } else {
   // Opened directly in a browser: a self-running demo.
   (window as unknown as { demo: typeof handle }).demo = handle;

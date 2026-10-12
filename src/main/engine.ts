@@ -39,9 +39,22 @@ export class Engine extends EventEmitter {
   private cpuCompat = false;
   status: EngineStatus = { state: 'idle' };
 
+  /** Inference threads; 0 lets the engine decide. */
+  private threads = 0;
+  private physicalCores = 0;
+  private softwareRendering = false;
+
   /** Tell the engine what the processor supports (from the hardware probe). */
-  setCpuFeatures(f: { avx2: boolean }) {
+  setCpuFeatures(f: { avx2: boolean; physicalCores: number }) {
     this.cpuCompat = !f.avx2 && !!nativeBinary('quill-engine-compat');
+    this.physicalCores = f.physicalCores;
+    this.threads = inferenceThreads(this.physicalCores, this.softwareRendering);
+  }
+
+  /** When the UI draws on the CPU, transcription leaves it more room. */
+  setSoftwareRendering(on: boolean) {
+    this.softwareRendering = on;
+    this.threads = inferenceThreads(this.physicalCores, on);
   }
 
   private setStatus(s: EngineStatus) {
@@ -94,8 +107,7 @@ export class Engine extends EventEmitter {
     const variant = t.device === 'gpu' ? 'vulkan' : 'cpu';
     if (!this.proc?.running || this.variant !== variant) await this.spawn(variant);
     const started = Date.now();
-    // 0 = let the engine use the physical core count (capped at 8).
-    const threads = 0;
+    const threads = this.threads;
     const r = await this.proc!.request<{ load_ms: number }>(
       'load',
       { model: t.path, gpu: t.device === 'gpu', flash_attn: true, threads },
@@ -178,6 +190,20 @@ export class Engine extends EventEmitter {
   get modelId() {
     return this.loaded?.modelId ?? null;
   }
+}
+
+/**
+ * whisper.cpp's worker threads spin-wait between steps, so saturating every core
+ * backfires when anything else (the ribbon, audio, your apps) needs the CPU.
+ * Leave one core free on machines that have cores to spare.
+ */
+export function inferenceThreads(physicalCores: number, softwareRendering = false): number {
+  const n = Math.floor(physicalCores) || 0;
+  if (n <= 0) return 0;
+  // Measured on a 4-core VM with a software-rendered UI: 2 threads ≈ 1.6 s,
+  // 3 ≈ 3.1 s, 4 ≈ 4.4 s for the same 11 s clip. Half the cores is the sweet spot.
+  if (softwareRendering) return Math.max(1, Math.min(8, Math.floor(n / 2)));
+  return Math.max(1, Math.min(8, n <= 2 ? n : n - 1));
 }
 
 function isIllegalInstruction(e: Error) {

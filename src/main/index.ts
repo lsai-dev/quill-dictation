@@ -45,6 +45,16 @@ async function main() {
   const hotkey = new Hotkey(native);
   await hotkey.apply(settings.get().hotkey);
   const overlay = new OverlayWindow();
+  // The engine's thread count depends on whether the UI renders in software, so
+  // the first model load waits (briefly) for the overlay to report it.
+  const rendererKnown = new Promise<void>((resolve) => {
+    overlay.once('renderer', (info: { software: boolean }) => {
+      engine.setSoftwareRendering(info.software);
+      resolve();
+    });
+    setTimeout(resolve, 2000);
+  });
+  overlay.on('renderer', (info: { software: boolean }) => engine.setSoftwareRendering(info.software));
   overlay.create();
 
   let hardware: HardwareProfile | null = null;
@@ -108,6 +118,7 @@ async function main() {
     const s = settings.get();
     if (!s.modelId || !downloads.isInstalled(s.modelId)) return;
     const device = recs?.device ?? 'cpu';
+    await rendererKnown;
     try {
       await engine.ensure(s.modelId, downloads.pathFor(s.modelId)!, s.engine === 'cpu' ? 'cpu' : s.engine === 'gpu' ? 'gpu' : device);
     } catch (e) {
@@ -117,7 +128,7 @@ async function main() {
 
   async function refreshHardware() {
     hardware = await detectHardware(native.available ? native : null, engine.hasGpuBuild());
-    engine.setCpuFeatures({ avx2: hardware.cpu.avx2 || hardware.cpu.neon });
+    engine.setCpuFeatures({ avx2: hardware.cpu.avx2 || hardware.cpu.neon, physicalCores: hardware.cpu.physicalCores });
     recs = recommend(hardware, settings.get().language, settings.get().engine);
     log.info(`hardware: ${hardware.cpu.brand}, ${(hardware.totalMemory / 2 ** 30).toFixed(1)} GB, gpus=[${hardware.gpus.map((g) => g.name).join(', ')}], vulkan=${hardware.vulkan} → ${recs.recommended.modelId} on ${recs.device}`);
     broadcast();

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import { resolve } from 'node:path';
 import { LineProcess } from '../src/main/lineProcess';
 import { buildPrompt } from '../src/main/dictation';
+import { inferenceThreads } from '../src/main/engine';
 
 const fake = () => new LineProcess('fake', process.execPath, [resolve(__dirname, 'fixtures/fake-sidecar.mjs')]);
 
@@ -38,6 +39,17 @@ describe('LineProcess', () => {
     await expect(p.request('nope')).rejects.toThrow(/unknown command/);
     await expect(p.request('crash')).rejects.toThrow(/stopped unexpectedly/);
     expect(p.running).toBe(false);
+  });
+});
+
+describe('inferenceThreads', () => {
+  it('leaves a core free, and half the cores when the UI renders in software', () => {
+    expect(inferenceThreads(0)).toBe(0);
+    expect(inferenceThreads(2)).toBe(2);
+    expect(inferenceThreads(4)).toBe(3);
+    expect(inferenceThreads(16)).toBe(8);
+    expect(inferenceThreads(4, true)).toBe(2);
+    expect(inferenceThreads(2, true)).toBe(1);
   });
 });
 

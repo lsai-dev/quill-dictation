@@ -77,6 +77,10 @@ export class OverlayWindow extends EventEmitter {
       this.ready = true;
       for (const c of this.queue.splice(0)) this.send(c);
     });
+    ipcMain.removeAllListeners(IPC.overlayRenderer);
+    ipcMain.on(IPC.overlayRenderer, (e, info: { software?: boolean }) => {
+      if (e.sender === this.win?.webContents) this.emit('renderer', { software: !!info?.software });
+    });
     ipcMain.removeAllListeners(IPC.overlayAudio);
     ipcMain.on(IPC.overlayAudio, (e, buf: unknown) => {
       if (e.sender === this.win?.webContents) this.emit('audio', toFloat32(buf));
