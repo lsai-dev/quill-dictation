@@ -53,5 +53,7 @@ function sanitize(s: Settings): Settings {
     motion: pick(s.motion, ['system', 'reduced', 'full'] as const, 'system'),
     insertMethod: pick(s.insertMethod, ['paste', 'type'] as const, 'paste'),
     customVocabulary: String(s.customVocabulary ?? '').slice(0, 600),
+    cleanup: !!s.cleanup,
+    cleanupModelId: typeof s.cleanupModelId === 'string' && s.cleanupModelId ? s.cleanupModelId : null,
   };
 }

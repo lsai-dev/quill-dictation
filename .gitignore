@@ -10,3 +10,5 @@ test-results/
 native/target-vulkan/
 native/target-compat/
 dev-app-update.yml
+native/target-cleanup/
+native/target-cleanup-vulkan/

@@ -1,212 +1,548 @@
+import { CLEANUP_MODELS, cleanupModelById, cleanupSupports } from '../../../shared/cleanupModels';
 import { formatBytes, MODELS, modelById } from '../../../shared/models';
-import { formatLatency } from '../../../shared/recommend';
-import type { AppSnapshot, DownloadProgress, ModelEstimate, ModelSpec, Recommendation } from '../../../shared/types';
-import { api, subscribe } from '../store';
-import { h, icons, ring, svg } from '../ui';
+import { formatLatency, recommendSetup } from '../../../shared/recommend';
+import type { AppSnapshot, CleanupEstimate, ModelEstimate } from '../../../shared/types';
+import { addsLatency, downloadLabel, etaText, modelName, modelSize, setupState, type SetupState } from '../setup';
+import { api, snapshot, subscribe } from '../store';
+import { crossfade, disclosure, h, icons, progressBar, svg, toggle } from '../ui';
+import { CleanupExample } from './example';
 
-const GOAL_ICON: Record<Recommendation['goal'], string> = {
-  balanced: icons.sparkle,
-  accuracy: icons.target,
-  speed: icons.bolt,
-  memory: icons.feather,
-};
-
+/**
+ * Models: one recommended setup — Dictation and Cleanup — with its readiness and the
+ * one thing to do next. Alternatives and technical details unfold on request.
+ */
 export function ModelsView() {
-  const pc = h('div', { class: 'card pc' });
-  const picks = h('div', { class: 'picks' });
-  const list = h('div', { class: 'card list models-list' });
-  const langNote = h('p', { class: 'muted small' });
+  const readiness = h('span', { class: 'readiness', role: 'status', 'aria-live': 'polite' }, h('i', { class: 'dot', 'aria-hidden': 'true' }), h('span', { class: 'readiness-text' }));
+  const setupTitle = h('h2', { class: 'setup-title', id: 'setup-title' }, 'Your setup');
+  const setupSub = h('p', { class: 'setup-sub' });
 
+  const dictation = RoleRow('dictation', 'Dictation', 'Turns your voice into text.', icons.mic);
+  const cleanup = RoleRow('cleanup', 'Cleanup', 'Polishes your words while preserving meaning.', icons.sparkle);
+  const cleanupSwitch = toggle(false, (on) => void setCleanup(on), 'Cleanup');
+  cleanup.side.prepend(cleanupSwitch);
+  const example = CleanupExample();
+  const exampleWrap = h('div', { class: 'unfold example-unfold' }, h('div', { class: 'unfold-inner' }, example.el));
+
+  const dictChoices = Choices('dictation');
+  const cleanChoices = Choices('cleanup');
+  dictation.change.addEventListener('click', () => openChoices(dictChoices, dictation.change));
+  cleanup.change.addEventListener('click', () => openChoices(cleanChoices, cleanup.change));
+
+  const foot = SetupFoot();
+  const card = h(
+    'article',
+    { class: 'card setup', 'aria-labelledby': 'setup-title' },
+    h('header', { class: 'setup-head' }, h('div', null, setupTitle, setupSub), readiness),
+    dictation.el,
+    dictChoices.el,
+    h('div', { class: 'role-sep', 'aria-hidden': 'true' }),
+    cleanup.el,
+    cleanChoices.el,
+    exampleWrap,
+    foot.el,
+  );
+
+  const pc = h('div', { class: 'pc-panel' });
+  const pcDisclosure = disclosure('This PC', pc);
   const el = h(
     'section',
     { class: 'view models' },
-    h('header', { class: 'view-head' }, h('h1', null, 'Models'), h('p', { class: 'subtitle' }, 'Quill runs speech recognition entirely on this PC. These suggestions are tuned to your hardware.')),
-    h('h2', { class: 'group-title' }, 'Your PC'),
-    pc,
-    h('h2', { class: 'group-title' }, 'Recommended for this PC'),
-    picks,
-    h('div', { class: 'section-head' }, h('h2', { class: 'group-title' }, 'All Models'), h('button', { class: 'link', type: 'button', onClick: () => api.openModelsFolder() }, svg(icons.folder, 'icon small'), 'Show in Folder')),
-    langNote,
-    list,
+    h('header', { class: 'view-head' }, h('h1', null, 'Models'), h('p', { class: 'subtitle' }, 'Everything runs on this PC. Quill chose the setup that suits it best.')),
+    card,
+    pcDisclosure.el,
   );
 
-  const rows = new Map<string, ReturnType<typeof ModelRow>>();
-  let lastKey = '';
+  let open: ReturnType<typeof Choices> | null = null;
+  function openChoices(c: ReturnType<typeof Choices>, trigger: HTMLButtonElement) {
+    const next = open === c ? null : c;
+    for (const x of [dictChoices, cleanChoices]) x.setOpen(x === next);
+    dictation.change.setAttribute('aria-expanded', String(next === dictChoices));
+    cleanup.change.setAttribute('aria-expanded', String(next === cleanChoices));
+    dictation.change.textContent = next === dictChoices ? 'Done' : 'Change';
+    cleanup.change.textContent = next === cleanChoices ? 'Done' : 'Change';
+    open = next;
+    if (next) next.focusSelected();
+    else trigger.focus({ preventScroll: true });
+  }
+
+  async function setCleanup(on: boolean) {
+    const s = snapshot();
+    const st = setupState(s, on);
+    await api.setSettings({ cleanup: on, ...(on && !s.settings.cleanupModelId && st.cleanupId ? { cleanupModelId: st.cleanupId } : {}) });
+    if (on) example.play();
+  }
 
   subscribe((s) => {
-    renderPc(pc, s);
-    const key = JSON.stringify([s.settings.language, s.settings.engine, s.recommendations?.picks.map((p) => p.modelId), s.recommendations?.device]);
-    if (key !== lastKey) {
-      lastKey = key;
-      // One card per model; a model that wins several goals carries all their labels.
-      const groups = new Map<string, Recommendation[]>();
-      for (const p of s.recommendations?.picks ?? []) groups.set(p.modelId, [...(groups.get(p.modelId) ?? []), p]);
-      picks.replaceChildren(...[...groups.values()].map((g) => PickCard(g)));
-      picks.dataset.count = String(groups.size);
-      rows.clear();
-      const visible = MODELS.filter((m) => s.settings.language === 'en' || !m.englishOnly);
-      list.replaceChildren(...visible.map((m) => {
-        const r = ModelRow(m);
-        rows.set(m.id, r);
-        return r.el;
-      }));
-      langNote.textContent = s.settings.language === 'en' ? 'English-only models are slightly more accurate for English. Multilingual models understand 99 languages.' : 'Showing multilingual models for your dictation language.';
+    const st = setupState(s);
+    const ready = st.readiness === 'ready';
+    setupTitle.textContent = st.needed.length && !s.models.some((m) => m.installed && modelById(m.id)) ? 'Recommended for this PC' : 'Your setup';
+    setupSub.textContent = s.recommendations ? `Tuned for your ${s.recommendations.device === 'gpu' ? s.recommendations.deviceLabel.split(' · ')[0] : s.recommendations.deviceLabel}.` : 'Looking at your hardware…';
+    renderReadiness(readiness, st, s);
+
+    // Dictation
+    const isInstalled = (id: string) => !!s.models.find((m) => m.id === id)?.installed;
+    const sizeNote = (id: string) => (isInstalled(id) ? '' : ` · ${formatBytes(modelSize(id))} download`);
+    const dEst = s.recommendations?.estimates.find((e) => e.modelId === st.dictationId);
+    dictation.set(modelName(st.dictationId), `${dEst ? capital(formatLatency(dEst.latencySec)) : ''}${sizeNote(st.dictationId)}`.replace(/^ · /, ''), progressFor(s, st.dictationId));
+
+    // Cleanup
+    const cEst = s.setup?.cleanupEstimates.find((e) => e.modelId === st.cleanupId);
+    const offered = !!st.cleanupId;
+    cleanupSwitch.checked = s.settings.cleanup && offered;
+    cleanupSwitch.disabled = !offered;
+    cleanup.el.classList.toggle('off', !cleanupSwitch.checked);
+    cleanup.el.classList.toggle('unavailable', !offered);
+    if (offered) {
+      cleanup.set(modelName(st.cleanupId), `${cEst ? capital(addsLatency(cEst.latencySec)) : ''}${sizeNote(st.cleanupId!)}`.replace(/^ · /, ''), progressFor(s, st.cleanupId!));
+    } else {
+      cleanup.set('Not available on this PC', s.setup?.reason ?? '', null);
     }
-    picks.querySelectorAll<HTMLElement>('[data-pick]').forEach((card) => updatePick(card, s));
-    for (const [id, r] of rows) r.update(s, s.recommendations?.estimates.find((e) => e.modelId === id));
+    if (offered && !s.setup?.cleanupId && !s.settings.cleanup) {
+      // Runs here, but slowly: offered honestly, off unless you choose it.
+      cleanup.set(modelName(st.cleanupId), s.setup?.reason ?? '', progressFor(s, st.cleanupId!));
+    }
+    cleanup.change.hidden = !offered;
+    exampleWrap.classList.toggle('open', offered);
+    example.setLanguage(s.settings.language);
+
+    dictChoices.update(s, st);
+    cleanChoices.update(s, st);
+    foot.update(s, st);
+    renderPc(pc, s);
+    card.dataset.ready = String(ready);
   });
 
   return el;
 }
 
+const capital = (t: string) => t.charAt(0).toUpperCase() + t.slice(1);
+
+function progressFor(s: AppSnapshot, id: string) {
+  return s.downloads.find((d) => d.modelId === id && (d.state === 'downloading' || d.state === 'verifying')) ?? null;
+}
+
+function renderReadiness(el: HTMLElement, st: SetupState, s: AppSnapshot) {
+  const text = el.querySelector('.readiness-text') as HTMLElement;
+  let label: string;
+  switch (st.readiness) {
+    case 'ready':
+      label = 'Ready';
+      break;
+    case 'downloading':
+      label = 'Downloading';
+      break;
+    case 'loading':
+      label = 'Getting ready';
+      break;
+    case 'attention':
+      label = 'Needs attention';
+      break;
+    default:
+      label = s.models.some((m) => m.installed && modelById(m.id)) ? 'Download needed' : 'Not downloaded';
+  }
+  el.dataset.state = st.readiness;
+  if (text.textContent !== label) text.textContent = label;
+}
+
+// ── A role: Dictation or Cleanup ───────────────────────────────────────────
+function RoleRow(role: 'dictation' | 'cleanup', title: string, what: string, icon: string) {
+  const name = h('span', { class: 'role-model-name' });
+  const meta = h('span', { class: 'role-model-meta' });
+  const change = h('button', { class: 'link role-change', type: 'button', 'aria-expanded': 'false', 'aria-controls': `choices-${role}` }, 'Change');
+  const side = h('div', { class: 'role-side' }, change);
+  const el = h(
+    'div',
+    { class: 'role', 'data-role': role },
+    h('span', { class: 'role-glyph', 'aria-hidden': 'true' }, svg(icon)),
+    h(
+      'div',
+      { class: 'role-body' },
+      h('div', { class: 'role-line' }, h('h3', { class: 'role-name' }, title), h('span', { class: 'role-what' }, what)),
+      h('div', { class: 'role-model' }, name, meta),
+    ),
+    side,
+  );
+  return {
+    el,
+    side,
+    change,
+    set(model: string, detail: string, d: AppSnapshot['downloads'][number] | null) {
+      const text = d ? (d.state === 'verifying' ? 'Verifying…' : `Downloading · ${Math.floor((d.received / Math.max(1, d.total)) * 100)}%`) : detail;
+      // Progress ticks update in place; a change of model or of state cross-fades.
+      const kindChanged = el.classList.contains('downloading') !== !!d || name.textContent !== model;
+      el.classList.toggle('downloading', !!d);
+      if (kindChanged && name.textContent) crossfade([name, meta], () => {
+        name.textContent = model;
+        meta.textContent = text;
+      });
+      else {
+        if (name.textContent !== model) name.textContent = model;
+        if (meta.textContent !== text) meta.textContent = text;
+      }
+    },
+  };
+}
+
+// ── Alternatives, unfolding inside the card ────────────────────────────────
+interface Row {
+  id: string;
+  el: HTMLElement;
+  update(s: AppSnapshot, st: SetupState): void;
+}
+
+function Choices(role: 'dictation' | 'cleanup') {
+  const list = h('div', { class: 'choice-list', role: 'list', 'aria-label': role === 'dictation' ? 'Dictation models' : 'Cleanup models' });
+  const marker = h('span', { class: 'choice-marker', 'aria-hidden': 'true' });
+  list.append(marker);
+  const more = h('button', { class: 'link choice-more', type: 'button', 'aria-expanded': 'false' });
+  const note = h('p', { class: 'choice-note' });
+  const inner = h('div', { class: 'unfold-inner' }, list, more, note);
+  const el = h('div', { class: 'unfold choices', id: `choices-${role}`, 'data-role': role }, inner);
+  let rows: Row[] = [];
+  let key = '';
+  let showAll = false;
+  let expanded: string | null = null;
+  let selected: string | null = null;
+
+  more.addEventListener('click', () => {
+    showAll = !showAll;
+    more.setAttribute('aria-expanded', String(showAll));
+    key = '';
+    const s = snapshot();
+    rebuild(s, setupState(s));
+  });
+
+  function rebuild(s: AppSnapshot, st: SetupState) {
+    let ids: string[];
+    if (role === 'dictation') {
+      const picks = [...new Set((s.recommendations?.picks ?? []).map((p) => p.modelId))];
+      const all = MODELS.filter((m) => s.settings.language === 'en' || !m.englishOnly).map((m) => m.id);
+      const current = st.dictationId;
+      ids = showAll ? all : [...new Set([...picks, current, ...s.models.filter((m) => m.installed && modelById(m.id)).map((m) => m.id)])].filter((id) => all.includes(id));
+      ids.sort((a, b) => all.indexOf(a) - all.indexOf(b));
+      more.hidden = ids.length >= all.length && !showAll;
+      more.textContent = showAll ? 'Show fewer' : `Show all ${all.length} models`;
+      note.textContent = s.settings.language === 'en' ? 'English-only models are a little more accurate in English. The others understand 99 languages.' : 'Showing models that understand your dictation language.';
+    } else {
+      ids = CLEANUP_MODELS.filter((m) => cleanupSupports(m, s.settings.language)).map((m) => m.id);
+      more.hidden = true;
+      const english = CLEANUP_MODELS.filter((m) => !cleanupSupports(m, s.settings.language)).map((m) => m.name);
+      note.textContent = english.length ? `${english.join(' and ')} ${english.length > 1 ? 'work' : 'works'} in English only.` : 'Cleanup never sends anything anywhere: it runs on this PC like dictation.';
+    }
+    const nextKey = ids.join(',');
+    if (nextKey === key) return;
+    key = nextKey;
+    rows = ids.map((id) => ChoiceRow(role, id, () => toggleExpanded(id)));
+    list.replaceChildren(marker, ...rows.map((r) => r.el));
+  }
+
+  function toggleExpanded(id: string) {
+    expanded = expanded === id ? null : id;
+    for (const r of rows) {
+      const on = r.id === expanded;
+      r.el.classList.toggle('expanded', on);
+      r.el.querySelector('.choice-main')!.setAttribute('aria-expanded', String(on));
+      (r.el.querySelector('.choice-details') as HTMLElement).inert = !on;
+    }
+  }
+
+  // The selection marker glides to the chosen row.
+  function placeMarker() {
+    const row = rows.find((r) => r.id === selected)?.el;
+    if (!row || !el.classList.contains('open')) {
+      marker.style.opacity = '0';
+      marker.dataset.shown = '';
+      return;
+    }
+    const main = row.querySelector('.choice-main') as HTMLElement;
+    // Appear where the selection is; glide only when the selection moves.
+    if (!marker.dataset.shown) {
+      marker.style.transition = 'none';
+      marker.style.transform = `translateY(${row.offsetTop}px)`;
+      marker.style.height = `${main.offsetHeight}px`;
+      void marker.offsetWidth;
+      marker.style.transition = '';
+      marker.dataset.shown = '1';
+    }
+    marker.style.opacity = '1';
+    marker.style.transform = `translateY(${row.offsetTop}px)`;
+    marker.style.height = `${main.offsetHeight}px`;
+  }
+  new ResizeObserver(placeMarker).observe(list);
+
+  return {
+    el,
+    setOpen(on: boolean) {
+      el.classList.toggle('open', on);
+      el.toggleAttribute('inert', !on);
+      requestAnimationFrame(placeMarker);
+    },
+    focusSelected() {
+      (rows.find((r) => r.id === selected)?.el.querySelector('.choice-main') as HTMLElement | null)?.focus({ preventScroll: true });
+    },
+    update(s: AppSnapshot, st: SetupState) {
+      rebuild(s, st);
+      selected = role === 'dictation' ? st.dictationId : st.cleanupId;
+      for (const r of rows) r.update(s, st);
+      requestAnimationFrame(placeMarker);
+    },
+  };
+}
+
+function ChoiceRow(role: 'dictation' | 'cleanup', id: string, onToggle: () => void): Row {
+  const w = modelById(id);
+  const c = cleanupModelById(id);
+  const name = w?.name ?? c!.name;
+  const tag = h('span', { class: 'choice-tag' });
+  const meta = h('span', { class: 'choice-meta' });
+  const radio = h('span', { class: 'choice-radio', 'aria-hidden': 'true' });
+  const detailsId = `choice-${role}-${id.replace(/[^\w-]/g, '-')}`;
+  const main = h(
+    'button',
+    { class: 'choice-main', type: 'button', 'aria-expanded': 'false', 'aria-controls': detailsId, onClick: onToggle },
+    radio,
+    h('span', { class: 'choice-name' }, name, tag),
+    meta,
+    svg(icons.chevron, 'icon small choice-chevron'),
+  );
+  const facts = h('dl', { class: 'facts' });
+  const actions = h('div', { class: 'choice-actions' });
+  const details = h('div', { class: 'choice-details', id: detailsId }, h('div', { class: 'choice-details-inner' }, h('p', { class: 'choice-blurb' }, w?.blurb ?? c!.blurb), facts, actions));
+  details.inert = true;
+  const el = h('div', { class: 'choice', role: 'listitem', 'data-id': id }, main, details);
+  let factsKey = '';
+
+  return {
+    id,
+    el,
+    update(s, st) {
+      const installed = !!s.models.find((m) => m.id === id)?.installed;
+      const current = role === 'dictation' ? st.dictationId === id : st.cleanupId === id;
+      const inUse = current && installed && (role === 'dictation' || st.cleanupOn);
+      const dl = s.downloads.find((d) => d.modelId === id);
+      const wEst: ModelEstimate | undefined = w ? s.recommendations?.estimates.find((e) => e.modelId === id) : undefined;
+      const cEst: CleanupEstimate | undefined = c ? s.setup?.cleanupEstimates.find((e) => e.modelId === id) : undefined;
+      const recommended = role === 'dictation' ? s.setup?.dictationId === id || s.recommendations?.recommended.modelId === id : s.setup?.cleanupId === id;
+      const goal = w ? s.recommendations?.picks.find((p) => p.modelId === id && p.goal !== 'balanced') : undefined;
+
+      if (current) main.setAttribute('aria-current', 'true');
+      else main.removeAttribute('aria-current');
+      el.classList.toggle('current', current);
+      tag.textContent = recommended ? 'Recommended' : goal ? goal.title : '';
+      tag.hidden = !tag.textContent;
+
+      const fits = w ? (wEst?.fits ?? true) : (cEst?.fits ?? true) && (cEst?.supported ?? true);
+      let metaText: string;
+      if (dl && dl.state !== 'error') metaText = `${Math.floor((dl.received / Math.max(1, dl.total)) * 100)}%`;
+      else if (!fits && !installed) metaText = 'Too large for this PC';
+      else if (w && wEst) metaText = `${capital(formatLatency(wEst.latencySec))} · ${formatBytes(w.sizeBytes)}`;
+      else if (c && cEst) metaText = `${capital(addsLatency(cEst.latencySec))} · ${formatBytes(c.sizeBytes)}`;
+      else metaText = formatBytes(modelSize(id));
+      if (installed && !dl) metaText += ' · Downloaded';
+      meta.textContent = metaText;
+      main.setAttribute('aria-label', `${name}${tag.textContent ? `, ${tag.textContent}` : ''}, ${metaText}${current ? ', chosen' : ''}`);
+
+      const nextFacts = JSON.stringify([installed, wEst?.device, cEst?.device, s.settings.language]);
+      if (nextFacts !== factsKey) {
+        factsKey = nextFacts;
+        const fact = (k: string, v: string) => [h('dt', null, k), h('dd', null, v)];
+        const rows = w
+          ? [
+              ...fact('Accuracy', accuracyWords(w.accuracy)),
+              ...fact('Languages', w.englishOnly ? 'English' : '99 languages'),
+              ...fact('Runs on', wEst?.device === 'gpu' ? 'Graphics card' : 'Processor'),
+              ...fact('Memory', `About ${formatBytes(w.memoryBytes)}`),
+              ...fact('Download', `${formatBytes(w.sizeBytes)} · ${w.quant === 'f16' ? 'Full precision' : 'Compressed'}`),
+              ...fact('Source', 'whisper.cpp (OpenAI Whisper), MIT'),
+            ]
+          : [
+              ...fact('Made by', c!.maker),
+              ...fact('Languages', c!.languages === 'all' ? 'English, Spanish and 199 more' : c!.languages.length === 1 ? 'English' : `${c!.languages.length} languages, including English and Spanish`),
+              ...fact('Runs on', cEst?.device === 'gpu' ? 'Graphics card' : 'Processor'),
+              ...fact('Memory', `About ${formatBytes(c!.memoryBytes)}`),
+              ...fact('Download', `${formatBytes(c!.sizeBytes)} · ${c!.file}`),
+              ...fact('License', c!.license),
+            ];
+        facts.replaceChildren(...rows);
+      }
+
+      const acts: HTMLElement[] = [];
+      if (dl && dl.state !== 'error') {
+        acts.push(h('button', { class: 'btn', type: 'button', onClick: () => api.cancelDownload(id) }, 'Cancel Download'));
+      } else if (inUse) {
+        acts.push(h('span', { class: 'in-use' }, svg(icons.check, 'icon small'), 'In use'));
+      } else if (installed) {
+        acts.push(h('button', { class: 'btn primary', type: 'button', onClick: () => (role === 'dictation' ? api.useModel(id) : api.useCleanupModel(id)) }, 'Use This Model'));
+      } else if (fits) {
+        acts.push(
+          h(
+            'button',
+            {
+              class: 'btn primary',
+              type: 'button',
+              onClick: async () => {
+                // What you use now keeps working while this downloads; it switches once it's here.
+                const r = await api.downloadModel(id);
+                if (r.ok) await (role === 'dictation' ? api.useModel(id) : api.useCleanupModel(id));
+              },
+            },
+            svg(icons.download, 'icon small'),
+            `Download · ${formatBytes(modelSize(id))}`,
+          ),
+        );
+      }
+      if (installed && !inUse && !dl) {
+        acts.push(h('button', { class: 'btn subtle', type: 'button', onClick: () => api.deleteModel(id) }, 'Remove from This PC'));
+      }
+      if (c) acts.push(h('a', { class: 'link small', href: c.licenseUrl, target: '_blank', rel: 'noreferrer' }, 'License'));
+      actions.replaceChildren(...acts);
+    },
+  };
+}
+
+function accuracyWords(acc: number) {
+  if (acc >= 93) return 'Excellent';
+  if (acc >= 86) return 'Very good';
+  if (acc >= 78) return 'Good';
+  if (acc >= 68) return 'Everyday';
+  return 'Basic';
+}
+
+// ── The one thing to do next ───────────────────────────────────────────────
+function SetupFoot() {
+  const bar = progressBar('Download progress');
+  const cancel = h('button', { class: 'btn foot-cancel', type: 'button', 'aria-label': 'Cancel download' }, 'Cancel');
+  const progressNote = h('p', { class: 'foot-note' });
+  const progressLine = h('div', { class: 'unfold foot-progress' }, h('div', { class: 'unfold-inner' }, h('div', null, h('div', { class: 'foot-bar' }, bar.el, cancel), progressNote)));
+  const primary = h('button', { class: 'btn primary large foot-primary', type: 'button' });
+  const secondary = h('button', { class: 'btn large foot-secondary', type: 'button' });
+  const reset = h('button', { class: 'link foot-reset', type: 'button' }, 'Use Recommended Setup');
+  const note = h('p', { class: 'foot-note' });
+  const problem = h('p', { class: 'foot-problem', role: 'alert' });
+  const actions = h('div', { class: 'foot-actions' }, primary, secondary, reset);
+  const el = h('footer', { class: 'setup-foot' }, problem, progressLine, actions, note);
+  let cancelAction: () => void = () => undefined;
+  cancel.addEventListener('click', () => cancelAction());
+  let action: () => void = () => undefined;
+  let secondaryAction: () => void = () => undefined;
+  primary.addEventListener('click', () => action());
+  secondary.addEventListener('click', () => secondaryAction());
+  // Back to the recommendation without breaking what works: download what's missing
+  // first, and switch once it's here.
+  reset.addEventListener('click', async () => {
+    const s = snapshot();
+    if (!s.hardware) return;
+    const st = setupState(s);
+    const rec = recommendSetup(s.hardware, s.settings.language, s.settings.engine);
+    const ids = [rec.dictationId, ...(st.cleanupOn && rec.cleanupId ? [rec.cleanupId] : [])];
+    const missing = ids.filter((id) => !s.models.find((m) => m.id === id)?.installed);
+    if (missing.length && !(await api.downloadModels(missing)).ok) return;
+    await api.useModel(rec.dictationId);
+    if (st.cleanupOn && rec.cleanupId) await api.useCleanupModel(rec.cleanupId);
+  });
+
+  return {
+    el,
+    update(_s: AppSnapshot, st: SetupState) {
+      el.dataset.state = st.readiness;
+      problem.textContent = st.problem ?? '';
+      problem.hidden = !st.problem;
+      reset.hidden = !st.custom || st.readiness === 'downloading';
+      let showPrimary = true;
+      let showSecondary = false;
+      let noteText = '';
+
+      if (st.readiness === 'downloading' && st.downloading) {
+        const d = st.downloading;
+        bar.set(d.total ? d.received / d.total : 0, d.state === 'verifying');
+        const step = st.needed.length > 1 ? `${st.needed.indexOf(d.modelId) + 1} of ${st.needed.length}: ` : '';
+        progressNote.textContent = `${step}${modelName(d.modelId)} · ${formatBytes(d.received)} of ${formatBytes(d.total)} · ${etaText(d)}`;
+        showPrimary = false;
+        cancelAction = () => api.cancelDownload(d.modelId);
+      } else if (st.failed) {
+        primary.textContent = st.failed.received > 0 ? 'Resume Download' : 'Try Again';
+        action = () => void api.downloadModels(st.needed);
+        showSecondary = true;
+        secondary.textContent = 'Not Now';
+        const failedId = st.failed.modelId;
+        secondaryAction = () => api.dismissDownload(failedId);
+        noteText = st.failed.received > 0 ? `${formatBytes(st.failed.received)} is already here — Quill picks up where it stopped.` : '';
+      } else if (st.needed.length) {
+        primary.textContent = downloadLabel(st);
+        action = () => void api.downloadModels(st.needed);
+        noteText = 'Downloaded once, verified, and run entirely on this PC.';
+      } else if (st.readiness === 'attention') {
+        primary.textContent = 'Try Again';
+        action = () => void api.retryModels();
+      } else if (st.readiness === 'loading') {
+        showPrimary = false;
+        noteText = 'Loading your models — this takes a few seconds after they’re downloaded or changed.';
+      } else {
+        primary.textContent = 'Try It Now';
+        primary.classList.remove('primary');
+        action = () => void api.startDictation();
+        noteText = '';
+      }
+      if (st.readiness !== 'ready') primary.classList.add('primary');
+      primary.hidden = !showPrimary;
+      secondary.hidden = !showSecondary;
+      progressLine.classList.toggle('open', st.readiness === 'downloading');
+      progressLine.inert = st.readiness !== 'downloading';
+      actions.hidden = !showPrimary && !showSecondary && reset.hidden;
+      note.textContent = noteText;
+      note.hidden = !noteText;
+    },
+  };
+}
+
+// ── This PC ────────────────────────────────────────────────────────────────
 function renderPc(el: HTMLElement, s: AppSnapshot) {
   const hw = s.hardware;
   if (!hw) {
     el.replaceChildren(h('p', { class: 'muted' }, 'Looking at your hardware…'));
     return;
   }
+  const key = JSON.stringify([hw.cpu.brand, hw.totalMemory, s.recommendations?.device, s.setup?.dictationId, s.setup?.cleanupId, s.settings.modelId, s.settings.cleanupModelId, s.settings.cleanup]);
+  if (el.dataset.key === key) return;
+  el.dataset.key = key;
   const gpu = hw.gpus.find((g) => !g.integrated) ?? hw.gpus[0];
   const rec = s.recommendations;
-  const item = (icon: string, label: string, value: string, detail: string, active = false) =>
-    h('div', { class: `pc-item ${active ? 'active' : ''}` }, svg(icon, 'icon pc-icon'), h('div', null, h('div', { class: 'pc-label' }, label), h('div', { class: 'pc-value' }, value), h('div', { class: 'pc-detail' }, detail)));
   const cpuName = hw.cpu.brand.replace(/\(R\)|\(TM\)|CPU|Processor|@.*$/gi, '').replace(/\s+/g, ' ').replace(/\d+-Core/i, '').trim();
-  const features = [hw.cpu.avx512 ? 'AVX-512' : hw.cpu.avx2 ? 'AVX2' : hw.cpu.neon ? 'NEON' : 'Basic vector support'];
+  const item = (icon: string, label: string, value: string, detail: string, active: boolean) =>
+    h('div', { class: `pc-item ${active ? 'active' : ''}` }, svg(icon, 'icon pc-icon'), h('div', null, h('div', { class: 'pc-label' }, label), h('div', { class: 'pc-value' }, value), h('div', { class: 'pc-detail' }, detail)));
+  const st = setupState(s);
+  const cEst = s.setup?.cleanupEstimates.find((e) => e.modelId === st.cleanupId);
+  const dModel = modelById(st.dictationId);
+  const cModel = st.cleanupOn ? cleanupModelById(st.cleanupId) : undefined;
+
+  // Where the memory goes: each model on the device it runs on.
+  const onGpu = (rec?.device === 'gpu' ? dModel?.memoryBytes ?? 0 : 0) + (cModel && cEst?.device === 'gpu' ? cModel.memoryBytes : 0);
+  const onCpu = (rec?.device === 'cpu' ? dModel?.memoryBytes ?? 0 : 0) + (cModel && cEst?.device !== 'gpu' ? cModel.memoryBytes : 0);
+  const plan = h('div', { class: 'mem-plan' });
+  const bar = (label: string, total: number, parts: [string, number, string][]) => {
+    const used = parts.reduce((a, p) => a + p[1], 0);
+    return h(
+      'div',
+      { class: 'mem-row' },
+      h('div', { class: 'mem-head' }, h('span', null, label), h('span', { class: 'dim' }, `${formatBytes(used)} of ${formatBytes(total)}`)),
+      h('div', { class: 'mem-bar', role: 'img', 'aria-label': `${label}: ${parts.map((p) => `${p[0]} ${formatBytes(p[1])}`).join(', ')}, of ${formatBytes(total)}` },
+        ...parts.filter((p) => p[1] > 0).map(([, bytes, cls]) => h('i', { class: cls, style: `width:${Math.min(100, (bytes / Math.max(total, 1)) * 100).toFixed(2)}%` }))),
+      h('div', { class: 'mem-legend' }, ...parts.filter((p) => p[1] > 0).map(([name, bytes, cls]) => h('span', null, h('i', { class: cls }), `${name} ${formatBytes(bytes)}`))),
+    );
+  };
+  if (onGpu && gpu) plan.append(bar(`${gpu.name} memory`, gpu.vramBytes, [['Dictation', rec?.device === 'gpu' ? dModel?.memoryBytes ?? 0 : 0, 'd'], ['Cleanup', cModel && cEst?.device === 'gpu' ? cModel.memoryBytes : 0, 'c']]));
+  if (onCpu) plan.append(bar('System memory', hw.totalMemory, [['Dictation', rec?.device === 'cpu' ? dModel?.memoryBytes ?? 0 : 0, 'd'], ['Cleanup', cModel && cEst?.device !== 'gpu' ? cModel.memoryBytes : 0, 'c']]));
+
   el.replaceChildren(
     h(
       'div',
       { class: 'pc-grid' },
-      item(icons.cpu, 'Processor', cpuName, `${hw.cpu.physicalCores} cores · ${hw.cpu.logicalCores} threads · ${features.join(', ')}`, rec?.device === 'cpu'),
-      item(icons.memory, 'Memory', formatBytes(hw.totalMemory), `${formatBytes(hw.availableMemory)} available now`),
-      item(
-        icons.gpu,
-        'Graphics',
-        gpu ? gpu.name : 'Not detected',
-        gpu ? (gpu.integrated ? 'Integrated graphics' : `${formatBytes(gpu.vramBytes)} video memory${hw.vulkan ? '' : ' · driver update needed'}`) : 'Quill will use your processor',
-        rec?.device === 'gpu',
-      ),
+      item(icons.cpu, 'Processor', cpuName, `${hw.cpu.physicalCores} cores · ${hw.cpu.logicalCores} threads`, rec?.device === 'cpu'),
+      item(icons.memory, 'Memory', formatBytes(hw.totalMemory), `${formatBytes(hw.availableMemory)} free now`, false),
+      item(icons.gpu, 'Graphics', gpu ? gpu.name : 'Not detected', gpu ? (gpu.integrated ? 'Built into the processor' : `${formatBytes(gpu.vramBytes)}${hw.vulkan ? '' : ' · driver update needed'}`) : 'Quill uses your processor', rec?.device === 'gpu'),
     ),
-    h('p', { class: 'pc-summary' }, rec?.summary ?? ''),
+    plan,
+    h('p', { class: 'pc-summary' }, rec?.summary ?? '', s.setup?.cleanup ? ` ${s.setup.reason}` : ''),
+    h('button', { class: 'link', type: 'button', onClick: () => api.openModelsFolder() }, svg(icons.folder, 'icon small'), 'Show Models Folder'),
   );
-}
-
-function PickCard(group: Recommendation[]) {
-  const p = group[0];
-  const m = modelById(p.modelId)!;
-  const action = h('div', { class: 'pick-action' });
-  const card = h(
-    'article',
-    { class: `card pick ${p.goal === 'balanced' ? 'featured' : ''}`, 'data-pick': p.modelId, 'data-goal': p.goal },
-    h('div', { class: 'pick-head' }, svg(GOAL_ICON[p.goal], 'icon pick-icon'), h('span', { class: 'pick-goal' }, group.map((g) => g.title).join(' · '))),
-    h('h3', { class: 'pick-model' }, m.name),
-    h('p', { class: 'pick-reason' }, p.reason),
-    h(
-      'div',
-      { class: 'chips' },
-      h('span', { class: 'chip' }, svg(icons.bolt, 'icon tiny'), `≈ ${p.estimate.latencySec.toFixed(p.estimate.latencySec < 1 ? 1 : 1)} s`),
-      h('span', { class: 'chip' }, svg(icons.memory, 'icon tiny'), formatBytes(m.memoryBytes)),
-      h('span', { class: 'chip' }, svg(icons.download, 'icon tiny'), formatBytes(m.sizeBytes)),
-    ),
-    action,
-  );
-  return card;
-}
-
-function updatePick(card: HTMLElement, s: AppSnapshot) {
-  const id = card.dataset.pick!;
-  const action = card.querySelector('.pick-action') as HTMLElement;
-  action.replaceChildren(modelAction(id, s, card.dataset.goal === 'balanced'));
-}
-
-function modelAction(id: string, s: AppSnapshot, prominent: boolean): HTMLElement {
-  const st = s.models.find((m) => m.id === id);
-  const dl = s.downloads.find((d) => d.modelId === id && d.state === 'downloading');
-  const inUse = s.settings.modelId === id && st?.installed;
-  const m = modelById(id)!;
-  if (dl) return progressButton(dl);
-  if (inUse) {
-    const ready = s.engine.state === 'ready' && s.engine.modelId === id;
-    return h('span', { class: 'in-use' }, svg(icons.check, 'icon small'), ready ? 'In Use' : s.engine.state === 'loading' ? 'Loading…' : 'Selected');
-  }
-  if (st?.installed) return h('button', { class: `btn ${prominent ? 'primary' : ''}`, type: 'button', onClick: () => api.useModel(id) }, 'Use');
-  return h(
-    'button',
-    {
-      class: `btn ${prominent ? 'primary' : ''}`,
-      type: 'button',
-      onClick: async (e: Event) => {
-        (e.currentTarget as HTMLButtonElement).disabled = true;
-        const r = await api.downloadModel(id);
-        if (!r.ok && r.error) alertSoft(r.error);
-      },
-    },
-    svg(icons.download, 'icon small'),
-    `Download · ${formatBytes(m.sizeBytes)}`,
-  );
-}
-
-function progressButton(d: DownloadProgress) {
-  const r = ring(18);
-  r.set(d.total ? d.received / d.total : 0);
-  const pct = d.total ? Math.floor((d.received / d.total) * 100) : 0;
-  const eta = d.bytesPerSec > 0 ? Math.max(1, Math.round((d.total - d.received) / d.bytesPerSec)) : null;
-  return h(
-    'button',
-    { class: 'btn progress', type: 'button', title: 'Cancel download', onClick: () => api.cancelDownload(d.modelId) },
-    r.el,
-    h('span', null, d.state === 'verifying' ? 'Verifying…' : `${pct}%${eta ? ` · ${eta < 60 ? `${eta}s` : `${Math.round(eta / 60)} min`} left` : ''}`),
-  );
-}
-
-function ModelRow(m: ModelSpec) {
-  const meta = h('div', { class: 'row-meta' });
-  const action = h('div', { class: 'row-action' });
-  const del = h('button', { class: 'icon-btn subtle', type: 'button', 'aria-label': `Delete ${m.name}`, title: 'Delete', onClick: () => api.deleteModel(m.id) }, svg(icons.trash));
-  const el = h(
-    'div',
-    { class: 'row model-row' },
-    h('div', { class: 'row-main' }, h('div', { class: 'row-title' }, m.name, m.englishOnly ? h('span', { class: 'tag' }, 'English') : h('span', { class: 'tag' }, '99 languages')), h('p', { class: 'row-sub' }, m.blurb), meta),
-    h('div', { class: 'row-side' }, action, del),
-  );
-  return {
-    el,
-    update(s: AppSnapshot, est?: ModelEstimate) {
-      const st = s.models.find((x) => x.id === m.id);
-      del.hidden = !st?.installed;
-      meta.replaceChildren(
-        accuracyMeter(m.accuracy),
-        h('span', { class: `rating ${est?.rating ?? ''}` }, ratingText(est)),
-        h('span', { class: 'dim' }, `${formatBytes(m.sizeBytes)} download · ${formatBytes(m.memoryBytes)} memory`),
-      );
-      action.replaceChildren(est && !est.fits && !st?.installed ? h('span', { class: 'muted small' }, 'Too large for this PC') : modelAction(m.id, s, false));
-    },
-  };
-}
-
-function accuracyMeter(acc: number) {
-  const filled = Math.max(1, Math.min(5, Math.round((acc - 55) / 8.5)));
-  return h('span', { class: 'meter', title: 'Accuracy', 'aria-label': `Accuracy ${filled} of 5` }, ...Array.from({ length: 5 }, (_, i) => h('i', { class: i < filled ? 'on' : '' })), h('span', { class: 'meter-label' }, 'Accuracy'));
-}
-
-function ratingText(e?: ModelEstimate) {
-  if (!e) return '';
-  switch (e.rating) {
-    case 'great':
-      return `Runs great · ${formatLatency(e.latencySec)}`;
-    case 'good':
-      return `Runs well · ≈ ${e.latencySec.toFixed(1)} s`;
-    case 'slow':
-      return `Slow on this PC · ≈ ${Math.round(e.latencySec)} s`;
-    default:
-      return 'Needs more memory';
-  }
-}
-
-function alertSoft(msg: string) {
-  const t = h('div', { class: 'toast', role: 'alert' }, msg);
-  document.body.append(t);
-  requestAnimationFrame(() => t.classList.add('show'));
-  setTimeout(() => {
-    t.classList.remove('show');
-    setTimeout(() => t.remove(), 400);
-  }, 4200);
 }

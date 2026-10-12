@@ -1,0 +1,27 @@
+[package]
+name = "quill-cleanup"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Quill transcript-cleanup sidecar (a small local language model via llama.cpp)"
+publish = false
+
+[[bin]]
+name = "quill-cleanup"
+path = "src/main.rs"
+
+[features]
+default = []
+# GPU backend. Like quill-engine, the app starts this build only when the hardware
+# probe finds a usable GPU, and falls back to the CPU build if it fails.
+vulkan = ["llama-cpp-2/vulkan"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+# Pinned: the vendored llama.cpp must know the architectures in Quill's catalog
+# (qwen35, granite). No OpenMP: ggml's own thread pool spins down between requests.
+llama-cpp-2 = { version = "=0.1.159", default-features = false }
+llama-cpp-sys-2 = "=0.1.159"
+libc = "0.2"

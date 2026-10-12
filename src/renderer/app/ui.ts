@@ -53,7 +53,44 @@ export const icons = {
   sparkle: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M10 3c.6 3.4 2.6 5.4 6 6-3.4.6-5.4 2.6-6 6-.6-3.4-2.6-5.4-6-6 3.4-.6 5.4-2.6 6-6z"/></svg>',
   chevron: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="m8 5 5 5-5 5"/></svg>',
   folder: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"><path d="M3 6.5A1.5 1.5 0 0 1 4.5 5H8l1.5 1.8h6A1.5 1.5 0 0 1 17 8.3v6.2a1.5 1.5 0 0 1-1.5 1.5h-11A1.5 1.5 0 0 1 3 14.5z"/></svg>',
+  replay: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="M4.5 10a5.5 5.5 0 1 0 1.7-4"/><path d="M4.2 3.5v3h3"/></svg>',
+  wand: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round" stroke-linejoin="round"><path d="m3.5 16.5 9-9M11 6l1.5-1.5M14.5 2.8v2M13.5 3.8h2M16.8 7.2v1.6M16 8h1.6M8 3.2v1.6M7.2 4h1.6"/></svg>',
+  enter: '<svg viewBox="0 0 20 20" fill="none" stroke="currentColor" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"><path d="M15.5 4.5v5a2 2 0 0 1-2 2h-9M7.5 8.5l-3 3 3 3"/></svg>',
 };
+
+let uid = 0;
+
+/** A titled section that unfolds. Height animates from 0 with grid rows, so it is interruptible. */
+export function disclosure(title: string, content: HTMLElement) {
+  const id = `disclosure-${++uid}`;
+  const btn = h('button', { class: 'disclosure-toggle', type: 'button', 'aria-expanded': 'false', 'aria-controls': id }, h('span', null, title), svg(icons.chevron, 'icon small disclosure-chevron'));
+  const panel = h('div', { class: 'unfold', id }, h('div', { class: 'unfold-inner' }, content));
+  panel.inert = true;
+  const el = h('section', { class: 'disclosure' }, btn, panel);
+  const setOpen = (on: boolean) => {
+    el.classList.toggle('open', on);
+    panel.classList.toggle('open', on);
+    panel.inert = !on;
+    btn.setAttribute('aria-expanded', String(on));
+  };
+  btn.addEventListener('click', () => setOpen(!el.classList.contains('open')));
+  return { el, setOpen };
+}
+
+/** A determinate progress bar (0–1). Only ever shows real progress. */
+export function progressBar(label = 'Progress') {
+  const fill = h('i', { class: 'bar-fill' });
+  const el = h('div', { class: 'bar', role: 'progressbar', 'aria-label': label, 'aria-valuemin': '0', 'aria-valuemax': '100', 'aria-valuenow': '0' }, fill);
+  return {
+    el,
+    set(p: number, verifying = false) {
+      const v = Math.max(0, Math.min(1, p));
+      fill.style.transform = `scaleX(${verifying ? 1 : v})`;
+      el.setAttribute('aria-valuenow', String(Math.round((verifying ? 1 : v) * 100)));
+      el.classList.toggle('verifying', verifying);
+    },
+  };
+}
 
 export function toggle(checked: boolean, onChange: (v: boolean) => void, label: string) {
   const input = h('input', { type: 'checkbox', role: 'switch', class: 'switch', 'aria-label': label });
@@ -135,4 +172,32 @@ export function relativeTime(t: number) {
   if (m < 60) return `${m} min ago`;
   const hrs = Math.round(m / 60);
   return `${hrs} hr ago`;
+}
+
+/** Whether to keep things still: Settings › Motion, or the system setting when that says "System". */
+export function reducedMotion(): boolean {
+  return document.documentElement.dataset.motion === 'reduced';
+}
+
+export function onMotionChange(cb: (reduced: boolean) => void) {
+  window.addEventListener('quill:motion', (e) => cb((e as CustomEvent<boolean>).detail));
+}
+
+const fading = new WeakMap<Element, number>();
+
+/** Fade elements out, change them, fade them back in — interruptible, and instant with reduced motion. */
+export function crossfade(els: HTMLElement[], change: () => void) {
+  if (reducedMotion()) {
+    change();
+    return;
+  }
+  for (const e of els) {
+    clearTimeout(fading.get(e));
+    e.classList.add('fade-out');
+  }
+  const t = window.setTimeout(() => {
+    change();
+    for (const e of els) e.classList.remove('fade-out');
+  }, 140);
+  for (const e of els) fading.set(e, t);
 }

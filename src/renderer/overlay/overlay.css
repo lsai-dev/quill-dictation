@@ -92,11 +92,14 @@ canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: n
   outline: none;
 }
 #cancel { left: 30px; transform: translate(26px, -50%) scale(0.55); }
-#stop { right: 30px; transform: translate(-26px, -50%) scale(0.55); }
+#stop, #skip { right: 30px; transform: translate(-26px, -50%) scale(0.55); }
 .ctrl.primary { color: var(--accent); }
 body.hover.active .ctrl { opacity: 1; pointer-events: auto; transform: translate(0, -50%) scale(1); }
 body.hover.active #stop { transition-delay: 30ms; }
 body.no-stop .ctrl#stop { opacity: 0 !important; pointer-events: none !important; }
+/* While polishing, the right-hand control inserts the transcript as spoken. */
+body:not(.refining) .ctrl#skip { opacity: 0 !important; pointer-events: none !important; }
+body.hover.active #skip { transition-delay: 30ms; }
 .ctrl:hover { background: color-mix(in srgb, var(--btn) 82%, var(--accent)); }
 .ctrl:active { transform: translate(0, -50%) scale(0.9) !important; transition-duration: 90ms; }
 

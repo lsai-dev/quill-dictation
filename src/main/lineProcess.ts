@@ -130,8 +130,17 @@ export class LineProcess extends EventEmitter {
   }
 
   request<T = any>(cmd: string, params: Record<string, unknown> = {}, payload?: Buffer, timeoutMs = 15000): Promise<T> {
-    if (!this.running || !this.child?.stdin) return Promise.reject(new Error(`${this.name} is not running`));
+    return this.send<T>(cmd, params, payload, timeoutMs).done;
+  }
+
+  /** Like `request`, but also returns the request's id (so it can be cancelled). */
+  send<T = any>(cmd: string, params: Record<string, unknown> = {}, payload?: Buffer, timeoutMs = 15000): { id: number; done: Promise<T> } {
+    if (!this.running || !this.child?.stdin) return { id: -1, done: Promise.reject(new Error(`${this.name} is not running`)) };
     const id = this.nextId++;
+    return { id, done: this.dispatch<T>(id, cmd, params, payload, timeoutMs) };
+  }
+
+  private dispatch<T>(id: number, cmd: string, params: Record<string, unknown>, payload: Buffer | undefined, timeoutMs: number): Promise<T> {
     const header: Record<string, unknown> = { id, cmd, ...params };
     if (payload) header.bytes = payload.length;
     const line = Buffer.from(JSON.stringify(header) + '\n', 'utf8');

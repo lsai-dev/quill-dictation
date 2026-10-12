@@ -9,11 +9,23 @@ import type { NativeHelper } from './native';
 import type { OverlayWindow } from './overlay';
 import { log } from './log';
 
-type Phase = 'idle' | 'listening' | 'stopping' | 'processing';
+type Phase = 'idle' | 'listening' | 'stopping' | 'processing' | 'refining';
+
+/** Optional polish between transcription and insertion (see cleanup.ts). */
+export interface DictationCleanup {
+  /** Whether cleanup is on and its model is ready to use right now. */
+  ready: () => boolean;
+  /** Never throws; the worst case is the original text. */
+  polish: (text: string, language: string) => Promise<{ text: string; outcome: 'polished' | 'unchanged' | 'fallback' | 'skipped'; ms: number }>;
+  /** Stop a running polish (its text is kept as spoken). */
+  cancel: () => void;
+}
 
 /** A press shorter than this is a tap (toggle); longer is hold-to-talk. */
 const HOLD_THRESHOLD_MS = 380;
 const MAX_RECORDING_MS = 10 * 60 * 1000;
+/** Polishing quicker than this goes straight from "Transcribing" to inserted. */
+const REFINE_REVEAL_MS = 220;
 
 export interface DictationDeps {
   overlay: OverlayWindow;
@@ -24,14 +36,19 @@ export interface DictationDeps {
   theme: () => { dark: boolean; reducedMotion: boolean | null };
   /** Resolves the loaded model, or a reason dictation can't start yet. */
   readiness: () => { ok: true; modelId: string } | { ok: false; message: string };
+  cleanup?: DictationCleanup;
 }
 
 /**
  * The dictation session state machine.
  *
- *   idle ──hotkey──▶ listening ──hotkey/stop──▶ stopping ──audio──▶ processing ──▶ idle
- *                       │                                              │
- *                       └──────────── Esc / cancel ────────────────────┘
+ *   idle ──hotkey──▶ listening ──hotkey/stop──▶ stopping ──audio──▶ processing ──▶ [refining] ──▶ idle
+ *                       │                                                                 │
+ *                       └──────────────────────── Esc / cancel ───────────────────────────┘
+ *
+ * Refining (cleanup) is optional. "Insert as-is" during refining skips straight to
+ * inserting the transcript; Esc cancels everything. Each session inserts at most once,
+ * and a result that arrives after its session ended is dropped.
  */
 export class Dictation extends EventEmitter {
   private phase: Phase = 'idle';
@@ -48,7 +65,7 @@ export class Dictation extends EventEmitter {
     d.hotkey.on('down', () => this.onDown());
     d.hotkey.on('up', () => this.onUp());
     d.hotkey.on('escape', () => this.cancel());
-    d.overlay.on('action', (a: string) => (a === 'stop' ? this.finish() : this.cancel()));
+    d.overlay.on('action', (a: string) => (a === 'stop' ? this.finish() : a === 'skip' ? this.skipCleanup() : this.cancel()));
     d.overlay.on('audio', (pcm: Float32Array) => void this.onAudio(pcm));
     d.overlay.on('mic-error', (msg: string) => this.fail(msg));
   }
@@ -121,8 +138,16 @@ export class Dictation extends EventEmitter {
     this.emit('phase', this.phase);
   }
 
+  /** During cleanup: insert the transcript as spoken, now. */
+  skipCleanup() {
+    if (this.phase !== 'refining') return;
+    log.info(`dictation ${this.session}: inserting without cleanup`);
+    this.d.cleanup?.cancel();
+  }
+
   cancel() {
     if (this.phase === 'idle') return;
+    if (this.phase === 'refining') this.d.cleanup?.cancel();
     this.session++;
     this.phase = 'idle';
     this.clearTimer();
@@ -167,6 +192,23 @@ export class Dictation extends EventEmitter {
         this.fail('Didn’t catch that');
         return;
       }
+      const transcribeMs = r.process_ms;
+      let polished: Awaited<ReturnType<DictationCleanup['polish']>> | null = null;
+      if (this.d.cleanup?.ready()) {
+        this.phase = 'refining';
+        this.emit('phase', this.phase);
+        // A polish that's over in a blink shouldn't flash a label; one that takes a
+        // moment shows it (and the control to skip it).
+        const reveal = setTimeout(() => {
+          if (session === this.session && this.phase === 'refining') this.d.overlay.send({ type: 'refine' });
+        }, REFINE_REVEAL_MS);
+        polished = await this.d.cleanup.polish(text, s.language === 'auto' ? r.language || 'auto' : s.language);
+        clearTimeout(reveal);
+        if (session !== this.session) return; // cancelled meanwhile
+        log.info(`dictation ${session}: cleanup ${polished.outcome} in ${polished.ms} ms`);
+      }
+      const original = text;
+      if (polished) text = polished.text;
       const sameTarget = !!this.target.handle && this.target.handle === this.last.handle && Date.now() - this.last.at < 15 * 60 * 1000;
       if (s.smartSpacing) text = smartSpace(text, { sameTarget, lastChar: this.last.lastChar });
       await insertText(text, { method: s.insertMethod, restoreClipboard: s.restoreClipboard }, this.d.native);
@@ -178,9 +220,11 @@ export class Dictation extends EventEmitter {
       const result: DictationResult = {
         text: text.trim(),
         audioMs: Math.round((pcm.length / SAMPLE_RATE) * 1000),
-        processMs: r.process_ms,
+        processMs: transcribeMs + (polished?.ms ?? 0),
         modelId: this.d.engine.modelId ?? '',
         at: Date.now(),
+        ...(polished ? { cleanup: polished.outcome, cleanupMs: polished.ms } : {}),
+        ...(polished?.outcome === 'polished' && original.trim() !== text.trim() ? { original: original.trim() } : {}),
       };
       this.history.unshift(result);
       this.history.length = Math.min(this.history.length, 25);

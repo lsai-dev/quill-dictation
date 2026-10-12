@@ -60,6 +60,7 @@ export class AnyRibbon {
     this.impl = fb;
     if (state === 'activating' || state === 'listening') fb.show();
     else if (state === 'processing') { fb.show(); fb.process(); }
+    else if (state === 'refining') { fb.show(); fb.refine(); }
     else if (state === 'error') { fb.show(); fb.error(); }
     else if (this.opts.persistent) fb.rest();
   }
@@ -79,6 +80,7 @@ export class AnyRibbon {
   show() { this.impl.show(); }
   rest() { this.impl.rest(); }
   process() { this.impl.process(); }
+  refine() { this.impl.refine(); }
   success() { this.impl.success(); }
   cancel() { this.impl.cancel(); }
   error(holdMs?: number) { this.impl.error(holdMs); }

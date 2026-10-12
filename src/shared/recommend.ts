@@ -1,5 +1,8 @@
-import { formatBytes, modelsForLanguage } from './models';
+import { CLEANUP_MODELS, cleanupModelById, cleanupSupports } from './cleanupModels';
+import { formatBytes, modelById, modelsForLanguage } from './models';
 import type {
+  CleanupEstimate,
+  CleanupModelSpec,
   EnginePreference,
   GpuInfo,
   HardwareProfile,
@@ -8,6 +11,7 @@ import type {
   Recommendation,
   RecommendationGoal,
   RecommendationSet,
+  SetupRecommendation,
 } from './types';
 
 /*
@@ -225,4 +229,178 @@ export function shortCpuName(brand: string): string {
     b.match(/(Apple\s+M\d\w*)/i);
   if (m) return m[1].replace(/\s+\d+-Core$/i, '').trim();
   return b.split(' ').slice(0, 3).join(' ') || 'processor';
+}
+
+/*
+ * Cleanup: dictation and polish, planned together
+ * ────────────────────────────────────────────────
+ * A cleanup model generates text one token at a time, and each token reads every
+ * weight once — so on a processor its speed is set mostly by memory bandwidth, and
+ * on a graphics card by video-memory bandwidth. Reading the prompt is compute-bound.
+ *
+ * Calibrated against Quill's own measurements of the catalog on real hardware (CI,
+ * `npm run eval:cleanup`; see docs/cleanup-models.md): on a 2-core/4-thread Xeon,
+ * Qwen3.5 2B decodes at 21.5 tok/s, Qwen3.5 4B at 10.1, S1-mini at 65 and Granite 4.0
+ * Micro at 12.4 (both with drafting), and prompts are read at ≈150 GFLOP/s. Memory
+ * bandwidth barely depends on core count, compute does — which is why drafting (which
+ * spends compute to save bandwidth) pays off for small models and on graphics cards,
+ * and much less for 3B models on a few cores.
+ *
+ * Both models stay loaded, so they must fit together — plus each engine's runtime
+ * and room for everything else you run.
+ */
+const CPU_BANDWIDTH = 32e9; // bytes/s, reference desktop, effective
+const CPU_FLOPS = 480e9; // effective prompt-processing throughput of the reference CPU
+const TOKEN_OVERHEAD_SEC = 0.003;
+const CLEANUP_PROMPT_TOKENS = 60; // a 10 s dictation in its prompt wrapper (the instructions are cached)
+const CLEANUP_OUTPUT_TOKENS = 45;
+const CLEANUP_FIXED_SEC = 0.05;
+/** Each inference engine's own footprint: process, runtime and scratch buffers. */
+export const ENGINE_RUNTIME_BYTES = 180 * MiB;
+const GPU_CONTEXT_BYTES = 250 * MiB;
+
+/** Estimated throughput of a cleanup model: prompt reading and (drafted) generation, in tokens/s. */
+export function cleanupThroughput(m: CleanupModelSpec, hw: HardwareProfile, device: 'gpu' | 'cpu', gpu?: GpuInfo) {
+  const flopsPerToken = 2 * m.params;
+  if (device === 'gpu' && gpu) {
+    const decodeSec = m.sizeBytes / gpuBandwidth(gpu) + 0.004;
+    // Checking a draft costs a GPU almost nothing beyond reading the weights once.
+    const draft = m.architecture === 'dense' ? 2.5 : 1;
+    return { prompt: (CPU_FLOPS * gpuSpeed(gpu) * 3) / flopsPerToken, decode: draft / decodeSec };
+  }
+  const f = Math.max(0.05, cpuSpeed(hw));
+  const bandwidth = CPU_BANDWIDTH * Math.min(1.15, Math.max(0.5, Math.pow(f, 0.15)));
+  const readSec = m.sizeBytes / bandwidth;
+  const decodeSec = readSec + TOKEN_OVERHEAD_SEC / Math.max(0.3, f);
+  const computeSec = flopsPerToken / (CPU_FLOPS * f);
+  // Drafting trades compute for bandwidth: worth more the more reading dominates.
+  // (Fitted to the measurements: ×1.66 for S1-mini and ×1.04 for Granite on 2 cores.)
+  const draft = m.architecture === 'dense' ? Math.min(2.5, Math.max(1, readSec / computeSec - 1)) : 1;
+  return { prompt: (CPU_FLOPS * f) / flopsPerToken, decode: draft / decodeSec };
+}
+
+/** Memory Quill's models may use together, after leaving room for the system and your apps. */
+export function systemBudget(hw: HardwareProfile): number {
+  const total = hw.totalMemory;
+  const avail = hw.availableMemory || total * 0.5;
+  const reserve = Math.max(2.5 * GiB, total * 0.3);
+  return Math.max(0, Math.min(total - reserve, Math.max(avail * 0.8, total * 0.35)));
+}
+
+/** Effective memory bandwidth of a graphics card, in bytes/s. */
+export function gpuBandwidth(g: GpuInfo): number {
+  if (g.vendor === 'apple') return 100e9;
+  if (g.integrated) return 60e9;
+  if (g.vendor === 'intel') return 250e9;
+  const vram = g.vramBytes / GiB;
+  if (vram >= 12) return 360e9;
+  if (vram >= 8) return 300e9;
+  if (vram >= 6) return 250e9;
+  if (vram >= 4) return 150e9;
+  return 100e9;
+}
+
+/** The cleanup engine is built for AVX2 (x86) or NEON (ARM) processors. */
+export function cleanupCpuSupported(hw: HardwareProfile): boolean {
+  return hw.cpu.avx2 || hw.cpu.neon;
+}
+
+export function cleanupLatency(m: CleanupModelSpec, hw: HardwareProfile, device: 'gpu' | 'cpu', gpu?: GpuInfo): number {
+  const t = cleanupThroughput(m, hw, device, gpu);
+  return CLEANUP_PROMPT_TOKENS / t.prompt + CLEANUP_OUTPUT_TOKENS / t.decode + CLEANUP_FIXED_SEC;
+}
+
+function cleanupScore(m: CleanupModelSpec, e: CleanupEstimate, budget: number): number {
+  const lat = e.latencySec;
+  const latencyPenalty = 6 * Math.max(0, lat - 0.8) + 10 * Math.max(0, lat - 2.0);
+  const downloadPenalty = 1.0 * (m.sizeBytes / GiB);
+  const memoryPenalty = 3 * (e.memoryBytes / Math.max(budget, 1));
+  return m.quality - latencyPenalty - downloadPenalty - memoryPenalty;
+}
+
+/** Cleanup that would add more than this to a dictation isn't recommended (it stays available). */
+export const CLEANUP_MAX_LATENCY_SEC = 3;
+
+/**
+ * Plans dictation and cleanup together. The dictation pick is `recommend()`'s (or the
+ * model you chose); cleanup is the best model that fits beside it — on the graphics
+ * card when there's room, otherwise on the processor — and answers quickly enough.
+ */
+export function recommendSetup(
+  hw: HardwareProfile,
+  language: string,
+  pref: EnginePreference = 'auto',
+  opts: { dictationId?: string | null; recs?: RecommendationSet } = {},
+): SetupRecommendation {
+  const recs = opts.recs ?? recommend(hw, language, pref);
+  const d = chooseDevice(hw, pref);
+  const chosen = opts.dictationId ? modelById(opts.dictationId) : undefined;
+  const dictation = chosen ?? modelById(recs.recommended.modelId)!;
+  const dictEst = recs.estimates.find((e) => e.modelId === dictation.id) ?? estimate(dictation, d);
+
+  const ram = systemBudget(hw);
+  // What's left for cleanup in each place, once dictation has what it needs.
+  const ramForDictation = d.device === 'cpu' ? dictation.memoryBytes : 0;
+  const ramLeft = ram - ramForDictation - ENGINE_RUNTIME_BYTES * 2;
+  const vramLeft = d.device === 'gpu' && d.gpu ? d.memoryBudget - dictation.memoryBytes - GPU_CONTEXT_BYTES : 0;
+  const cpuOk = cleanupCpuSupported(hw);
+
+  const estimates: CleanupEstimate[] = CLEANUP_MODELS.map((m) => {
+    const supported = cleanupSupports(m, language) && (cpuOk || vramLeft >= m.memoryBytes);
+    const onGpu = d.device === 'gpu' && !!d.gpu && vramLeft >= m.memoryBytes;
+    const device: 'gpu' | 'cpu' = onGpu ? 'gpu' : 'cpu';
+    const latency = cleanupLatency(m, hw, device, d.gpu);
+    const fits = onGpu || (cpuOk && ramLeft >= m.memoryBytes);
+    let rating: CleanupEstimate['rating'] = 'slow';
+    if (!supported || !fits) rating = 'unsupported';
+    else if (latency <= 1.0) rating = 'great';
+    else if (latency <= 2.5) rating = 'good';
+    return {
+      modelId: m.id,
+      latencySec: Math.round(latency * 100) / 100,
+      memoryBytes: m.memoryBytes,
+      fits,
+      device,
+      rating,
+      supported,
+    };
+  });
+
+  const usable = estimates.filter((e) => e.supported && e.fits && e.latencySec <= CLEANUP_MAX_LATENCY_SEC);
+  const best = usable.length
+    ? usable.reduce((a, b) =>
+        cleanupScore(cleanupModelById(b.modelId)!, b, ram) > cleanupScore(cleanupModelById(a.modelId)!, a, ram) ? b : a)
+    : null;
+  const cm = best ? cleanupModelById(best.modelId)! : null;
+  const runnable = estimates.filter((e) => e.supported && e.fits);
+  const fallback = !best && runnable.length ? runnable.reduce((a, b) => (b.latencySec < a.latencySec ? b : a)) : null;
+  const memoryBytes =
+    dictation.memoryBytes + ENGINE_RUNTIME_BYTES + (best ? best.memoryBytes + ENGINE_RUNTIME_BYTES : 0);
+
+  return {
+    dictationId: dictation.id,
+    cleanupId: best?.modelId ?? null,
+    cleanup: best,
+    cleanupFallbackId: fallback?.modelId ?? null,
+    cleanupEstimates: estimates,
+    totalLatencySec: Math.round((dictEst.latencySec + (best?.latencySec ?? 0)) * 100) / 100,
+    memoryBytes,
+    memoryBudget: d.device === 'gpu' ? d.memoryBudget + ram : ram,
+    reason: cleanupReason(hw, language, estimates, best, cm),
+  };
+}
+
+function cleanupReason(hw: HardwareProfile, language: string, all: CleanupEstimate[], best: CleanupEstimate | null, m: CleanupModelSpec | null): string {
+  if (best && m) {
+    const where = best.device === 'gpu' ? 'on your graphics card' : 'on your processor';
+    return `${m.name} polishes a typical sentence ${formatLatency(best.latencySec)} ${where}, next to your dictation model.`;
+  }
+  if (!cleanupCpuSupported(hw) && !all.some((e) => e.device === 'gpu' && e.fits)) {
+    return 'Cleanup needs a newer processor than this PC has. Dictation works just the same without it.';
+  }
+  const candidates = all.filter((e) => e.supported);
+  if (!candidates.length) return `None of the cleanup models handle ${language === 'auto' ? 'every language' : 'this language'} well yet.`;
+  if (!candidates.some((e) => e.fits)) return 'Cleanup needs more free memory than this PC has next to your dictation model.';
+  const quickest = Math.min(...candidates.filter((e) => e.fits).map((e) => e.latencySec));
+  return `Cleanup would add about ${Math.max(1, Math.round(quickest))} seconds to each dictation on this PC, so it’s off unless you turn it on.`;
 }

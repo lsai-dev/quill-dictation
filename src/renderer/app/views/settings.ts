@@ -1,4 +1,6 @@
 import type { AppSnapshot, Settings, UpdateStatus } from '../../../shared/types';
+import { navigate } from '../router';
+import { modelName, setupState } from '../setup';
 import { api, subscribe } from '../store';
 import { h, icons, keycaps, segmented, select, svg, toggle } from '../ui';
 
@@ -50,6 +52,22 @@ function updateControl(u: UpdateStatus): HTMLElement {
   return h('button', { class: 'btn', type: 'button', disabled: busy, onClick: () => api.checkForUpdates() }, 'Check Now');
 }
 
+/** Cleanup in Settings: the switch, with the model and where to change it. */
+function cleanupRow(s: AppSnapshot) {
+  const st = setupState(s);
+  const installed = !!st.cleanupId && !!s.models.find((m) => m.id === st.cleanupId)?.installed;
+  const detail = !st.cleanupId
+    ? s.setup?.reason ?? 'Not available on this PC.'
+    : `Polishes your words while preserving meaning, with ${modelName(st.cleanupId)}${installed ? '' : ' (needs a download)'}.`;
+  const sw = toggle(s.settings.cleanup && !!st.cleanupId, async (on) => {
+    await set({ cleanup: on, ...(on && st.cleanupId && !s.settings.cleanupModelId ? { cleanupModelId: st.cleanupId } : {}) });
+    if (on && !installed) navigate('models');
+  }, 'Cleanup');
+  sw.disabled = !st.cleanupId;
+  const change = h('button', { class: 'link small', type: 'button', onClick: () => navigate('models') }, 'Models');
+  return row('Cleanup', h('div', { class: 'row-controls' }, change, sw), detail);
+}
+
 function group(title: string, ...rows: Node[]) {
   return h('div', { class: 'group' }, h('h2', { class: 'group-title' }, title), h('div', { class: 'card list' }, ...rows));
 }
@@ -61,7 +79,13 @@ export function SettingsView() {
   let built = '';
   subscribe((s) => {
     // Rebuild only when something structural changes, so controls keep focus.
-    const key = JSON.stringify({ ...s.settings, customVocabulary: undefined, hk: s.hotkeyError, up: [s.update.state, 'version' in s.update ? s.update.version : ''] });
+    const key = JSON.stringify({
+      ...s.settings,
+      customVocabulary: undefined,
+      hk: s.hotkeyError,
+      up: [s.update.state, 'version' in s.update ? s.update.version : ''],
+      cleanup: [s.setup?.cleanupId, s.setup?.cleanupFallbackId, s.models.filter((m) => m.installed).map((m) => m.id).join()],
+    });
     if (key === built) return;
     built = key;
     const scroll = el.parentElement?.scrollTop ?? 0;
@@ -114,6 +138,7 @@ function build(s: AppSnapshot): Node[] {
       row('Language', select(st.language, LANGUAGES.map(([value, label]) => ({ value, label })), (v) => set({ language: v }), 'Language')),
       row('Microphone', mic),
       row('Custom vocabulary', vocab, 'Helps Quill spell names and specialized terms correctly.'),
+      cleanupRow(s),
       row('Voice commands', toggle(st.voiceCommands, (v) => set({ voiceCommands: v }), 'Voice commands'), 'Say “new line” or “new paragraph”.'),
       row('Smart spacing', toggle(st.smartSpacing, (v) => set({ smartSpacing: v }), 'Smart spacing'), 'Adds a space when you continue dictating in the same place.'),
     ),
@@ -138,7 +163,7 @@ function build(s: AppSnapshot): Node[] {
           { value: 'reduced', label: 'Reduced' },
           { value: 'full', label: 'Full' },
         ], (v) => set({ motion: v }), 'Motion'),
-        'Reduced motion keeps the ribbon still and shows each state with light alone.',
+        'Reduced motion keeps the ribbon still and shows each state with light alone; elsewhere, things fade instead of moving.',
       ),
       row('Sounds', toggle(st.sounds, (v) => set({ sounds: v }), 'Sounds'), 'Soft tones when the microphone opens and closes.'),
     ),
@@ -160,7 +185,7 @@ function build(s: AppSnapshot): Node[] {
       'div',
       { class: 'about' },
       h('div', { class: 'about-mark', 'aria-hidden': 'true' }),
-      h('div', null, h('div', { class: 'about-name' }, `Quill ${s.version}`), h('p', { class: 'muted small' }, 'Private by design: speech recognition runs on this PC and nothing you say leaves it. Models are downloaded once from the open-source whisper.cpp project.')),
+      h('div', null, h('div', { class: 'about-name' }, `Quill ${s.version}`), h('p', { class: 'muted small' }, 'Private by design: speech recognition and cleanup run on this PC and nothing you say leaves it. Models are downloaded once from Hugging Face — whisper.cpp for dictation, and the cleanup model you choose.')),
     ),
   ];
 }

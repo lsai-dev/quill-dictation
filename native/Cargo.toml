@@ -1,5 +1,5 @@
 [workspace]
-members = ["engine", "helper"]
+members = ["engine", "helper", "cleanup"]
 resolver = "2"
 
 [workspace.package]

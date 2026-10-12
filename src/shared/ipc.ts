@@ -18,8 +18,12 @@ export const IPC = {
   setSettings: 'app:set-settings',
   downloadModel: 'app:download-model',
   cancelDownload: 'app:cancel-download',
+  dismissDownload: 'app:dismiss-download',
   deleteModel: 'app:delete-model',
   useModel: 'app:use-model',
+  downloadModels: 'app:download-models',
+  useCleanupModel: 'app:use-cleanup-model',
+  retryModels: 'app:retry-models',
   refreshHardware: 'app:refresh-hardware',
   startDictation: 'app:start-dictation',
   copyText: 'app:copy-text',
@@ -31,4 +35,4 @@ export const IPC = {
   installUpdate: 'app:install-update',
 } as const;
 
-export type OverlayAction = 'stop' | 'cancel';
+export type OverlayAction = 'stop' | 'cancel' | 'skip';
