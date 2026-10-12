@@ -57,6 +57,8 @@ Two roles, one setup:
 - **Dictation** turns your voice into text (whisper.cpp).
 - **Cleanup** polishes your words while preserving meaning (a small language model in llama.cpp).
 
+![The setup step of the first run, the Models page in light and dark, and the overlay's Transcribing and Polishing states](docs/cleanup-design.png)
+
 The pipeline is *audio → dictation model → transcript → optional cleanup → insertion*. Cleanup is faithful by default: it removes fillers, stutters and false starts, fixes punctuation and capitals, and resolves clear spoken corrections — nothing else. Every result passes a strict guard (no new words or joining words, numbers kept, negations kept, corrections either resolved or left as spoken, identifiers verbatim, same language, no answering); anything it rejects, and any error, timeout or cancellation, inserts the transcript as spoken. Long dictations are cleaned piece by piece, each piece guarded on its own.
 
 The curated models — **S1-mini** (English specialist, 462 MB), **Qwen3.5 2B**, **Granite 4.0 Micro** and **Qwen3.5 4B** — were chosen for faithfulness, speed, memory, English and Spanish, llama.cpp support and permissive licenses. Sources, measured results and the models considered and left out are in [docs/cleanup-models.md](docs/cleanup-models.md). CI measures every model on an English/Spanish evaluation set (`npm run eval:cleanup`).
