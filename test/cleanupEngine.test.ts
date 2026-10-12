@@ -40,7 +40,7 @@ describe.skipIf(!bin)('cleanup sidecar', () => {
     const ready = await p.start();
     expect(ready.backend).toBe('cpu');
     const loaded = await p.request<{ recurrent: boolean; device: string }>('load', { model, threads: 2 }, undefined, 30000);
-    expect(loaded).toMatchObject({ device: 'CPU', recurrent: false });
+    expect(loaded).toMatchObject({ device: 'CPU', recurrent: !!process.env.QUILL_CLEANUP_SNAPSHOT });
   });
   afterAll(async () => {
     await p?.stop();
@@ -72,6 +72,11 @@ describe.skipIf(!bin)('cleanup sidecar', () => {
     // Fed its own output as the "transcript", the model accepts long drafts…
     const own = await clean('so um we should go', plain.text);
     expect(own.text).toBe(plain.text);
+    if (process.env.QUILL_CLEANUP_SNAPSHOT) {
+      // …unless it's recurrent: those can't rewind, so they never draft.
+      expect(own.drafted_tokens).toBe(0);
+      return;
+    }
     expect(own.accepted_tokens).toBeGreaterThan(plain.generated_tokens / 2);
     // …and with a damaged copy it rejects some, rewinds, and still matches exactly.
     const damaged = plain.text.replace(/(.{5})./g, '$1~');
@@ -97,6 +102,8 @@ describe.skipIf(!bin)('cleanup sidecar', () => {
     expect(Date.now() - started).toBeLessThan(1500);
     const after = await clean('hello there', '');
     expect(after.generated_tokens).toBeGreaterThan(0);
+    // The cached instructions survive a cancellation: no re-reading them.
+    expect(after.cached_tokens).toBeGreaterThan(10);
   });
 
   it('refuses prompts that would overflow the context', async () => {

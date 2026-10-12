@@ -373,11 +373,12 @@ fn serve(
                 }
                 let result = req.args::<CleanArgs>().and_then(|a| s.clean(&a, &is_cancelled));
                 if let Err(e) = &result {
+                    // A cancelled request leaves the cached prefix intact (the next request
+                    // trims back to it); after a real failure, start from a clean slate.
                     if e != CANCELLED {
                         log!("clean failed: {e}");
+                        s.prefix = None;
                     }
-                    // Whatever happened mid-request, the next one starts from a clean slate.
-                    s.prefix = None;
                 }
                 reply(out, &req.id, result);
             }

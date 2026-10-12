@@ -40,8 +40,10 @@ jobs:
         run: |
           cargo build --release -p quill-cleanup
           cargo test --release -p quill-cleanup
-      - name: Cleanup engine — integration tests (tiny model)
-        run: npx vitest run test/cleanupEngine.test.ts
+      - name: Cleanup engine — integration tests (tiny model; dense and recurrent cache paths)
+        run: |
+          npx vitest run test/cleanupEngine.test.ts
+          QUILL_CLEANUP_SNAPSHOT=1 npx vitest run test/cleanupEngine.test.ts
 
   cleanup-eval:
     name: Cleanup quality (real models)
