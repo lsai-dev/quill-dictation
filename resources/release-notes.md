@@ -1,9 +1,7 @@
-**Quill 0.1.0** — private, on-device dictation for Windows.
+**Quill 0.2.0** adds Cleanup: optional polishing of what you dictate.
 
-- Press **Win + Space** anywhere: tap to start and tap to finish, or hold while you speak. **Esc** cancels.
-- Speech recognition runs entirely on your PC with whisper.cpp — on your graphics card when it helps, otherwise your processor.
-- Quill reads your hardware and recommends a voice model: Recommended, Highest accuracy, Fastest or Lightest.
-- A living ribbon of pearlescent glass shows when Quill is listening, follows your voice and curls up while it writes.
-- Updates arrive inside the app: Quill tells you when a new version is ready and downloads only what changed.
+- Cleanup removes fillers, fixes punctuation and resolves spoken corrections, keeping your meaning, names, numbers and language. It never answers what you dictate; if a result looks off, Quill inserts what you said.
+- Turn it on in Models. Quill suggests a model that suits your PC, and it all stays on your device.
+- First-run setup now has the screen to itself, and the ribbon shows when Quill is polishing.
 
-Download **Quill-Setup-0.1.0.exe** below and run it. Windows may ask you to confirm because the installer isn't code-signed yet.
+New to Quill? Download **Quill-Setup-0.2.0.exe** below. Windows may ask you to confirm: the installer isn’t signed yet.

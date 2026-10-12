@@ -1,7 +1,7 @@
 {
   "name": "quill",
   "productName": "Quill",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Private, on-device voice dictation. Press Win+Space and speak.",
   "license": "MIT",
   "private": true,
