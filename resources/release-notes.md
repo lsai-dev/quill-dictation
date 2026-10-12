@@ -1,7 +1,8 @@
-**Quill 0.2.0** adds Cleanup: optional polishing of what you dictate.
+**Quill 0.2.1** makes the ribbon on Home something to play with.
 
-- Cleanup removes fillers, fixes punctuation and resolves spoken corrections, keeping your meaning, names, numbers and language. It never answers what you dictate; if a result looks off, Quill inserts what you said.
-- Turn it on in Models. Quill suggests a model that suits your PC, and it all stays on your device.
-- First-run setup now has the screen to itself, and the ribbon shows when Quill is polishing.
+- Brush the cursor across the ribbon and it moves with your stroke, ripples along its length and settles.
+- Rest the pointer nearby and it leans away and glows a little brighter.
+- Click and drag to catch it and pull. Let go and it swings back into place.
+- Quill now ships updates automatically: every change is built, tested and offered to you in the app.
 
-New to Quill? Download **Quill-Setup-0.2.0.exe** below. Windows may ask you to confirm: the installer isn’t signed yet.
+New to Quill? Download **Quill-Setup-0.2.1.exe** below. Windows may ask you to confirm: the installer isn’t signed yet.
