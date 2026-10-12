@@ -36,6 +36,14 @@ describe('recommendations', () => {
     expect(pick(r, 'memory').modelId).toBe('base.en-q5_1');
   });
 
+  it('never recommends something far slower than the machine can manage', () => {
+    for (const hw of Object.values(MACHINES)) {
+      const r = recommend(hw, 'en');
+      const quickest = Math.min(...r.estimates.filter((e) => e.fits).map((e) => e.latencySec));
+      for (const p of r.picks) expect(p.estimate.latencySec).toBeLessThanOrEqual(Math.max(4, quickest * 1.8) + 1e-9);
+    }
+  });
+
   it('gives the workstation the most accurate model', () => {
     const r = recommend(MACHINES.workstation, 'en');
     expect(pick(r, 'accuracy').modelId).toBe('large-v3');

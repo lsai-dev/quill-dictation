@@ -1,6 +1,7 @@
 // Builds Quill's native sidecars and stages them in resources/bin.
 //   node scripts/build-native.mjs            → quill-native + CPU engine
 //   node scripts/build-native.mjs --vulkan   → also the Vulkan (GPU) engine (needs the Vulkan SDK)
+//   node scripts/build-native.mjs --compat   → also an engine for CPUs without AVX2 (older/budget PCs)
 import { execFileSync } from 'node:child_process';
 import { copyFileSync, existsSync, mkdirSync } from 'node:fs';
 import { join } from 'node:path';
@@ -10,11 +11,17 @@ const native = join(process.cwd(), 'native');
 const out = join(process.cwd(), 'resources', 'bin');
 mkdirSync(out, { recursive: true });
 
+// whisper.cpp defaults to -march=native, which would bake this machine's newest
+// instructions (AVX-512, AMX…) into the engine and crash it on other CPUs.
+// Distributable builds target a portable AVX2/FMA/F16C baseline instead.
+// Set QUILL_NATIVE_CPU=1 for a build tuned to this machine only.
+const portable = process.env.QUILL_NATIVE_CPU ? {} : { GGML_NATIVE: 'OFF' };
+
 const cargo = (args, targetDir) =>
   execFileSync('cargo', ['build', '--release', ...args], {
     cwd: native,
     stdio: 'inherit',
-    env: { ...process.env, ...(targetDir ? { CARGO_TARGET_DIR: targetDir } : {}) },
+    env: { ...process.env, ...portable, ...(targetDir ? { CARGO_TARGET_DIR: targetDir } : {}) },
   });
 
 console.log('› Building quill-native and the CPU engine');
@@ -29,7 +36,28 @@ if (process.argv.includes('--vulkan')) {
   copyFileSync(join(dir, 'release', `quill-engine${exe}`), join(out, `quill-engine-vulkan${exe}`));
 }
 
-for (const f of ['quill-native', 'quill-engine-cpu', 'quill-engine-vulkan']) {
+if (process.argv.includes('--compat')) {
+  console.log('› Building the compatibility engine (no AVX/AVX2/FMA/F16C)');
+  const dir = join(native, 'target-compat');
+  execFileSync('cargo', ['build', '--release', '-p', 'quill-engine'], {
+    cwd: native,
+    stdio: 'inherit',
+    env: {
+      ...process.env,
+      CARGO_TARGET_DIR: dir,
+      GGML_NATIVE: 'OFF',
+      GGML_AVX: 'OFF',
+      GGML_AVX2: 'OFF',
+      GGML_AVX512: 'OFF',
+      GGML_FMA: 'OFF',
+      GGML_F16C: 'OFF',
+      GGML_BMI2: 'OFF',
+    },
+  });
+  copyFileSync(join(dir, 'release', `quill-engine${exe}`), join(out, `quill-engine-compat${exe}`));
+}
+
+for (const f of ['quill-native', 'quill-engine-cpu', 'quill-engine-compat', 'quill-engine-vulkan']) {
   const p = join(out, f + exe);
   console.log(`  ${existsSync(p) ? '✓' : '·'} ${f}${exe}`);
 }

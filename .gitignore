@@ -8,3 +8,4 @@ resources/bin/
 test-results/
 .cache/
 native/target-vulkan/
+native/target-compat/

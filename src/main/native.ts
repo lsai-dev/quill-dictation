@@ -80,6 +80,11 @@ export class NativeHelper extends EventEmitter {
     return (this.proc?.ready?.platform as string) ?? null;
   }
 
+  /** The helper can host the keyboard hook (Windows), whether or not it is installed right now. */
+  get isWindowsHelper() {
+    return this.available && this.platform === 'windows';
+  }
+
   /** Global hotkeys through the helper are only available on Windows. */
   get supportsHotkey() {
     return this.available && this.platform === 'windows' && !this.hookError;
@@ -87,12 +92,15 @@ export class NativeHelper extends EventEmitter {
 
   async setHotkey(spec: string) {
     this.hotkey = spec;
-    if (this.available) await this.proc!.request('set_hotkey', { hotkey: spec });
+    if (!this.available || this.platform !== 'windows') return;
+    const r = await this.proc!.request<{ hook_active?: boolean }>('set_hotkey', { hotkey: spec });
+    // The helper retries a failed hook install on config changes.
+    if (r.hook_active) this.hookError = null;
   }
 
   async setHotkeyEnabled(enabled: boolean) {
     this.hotkeyEnabled = enabled;
-    if (this.available) await this.proc!.request('set_hotkey_enabled', { enabled });
+    if (this.available && this.platform === 'windows') await this.proc!.request('set_hotkey_enabled', { enabled });
   }
 
   async captureEscape(enabled: boolean) {

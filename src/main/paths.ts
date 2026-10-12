@@ -19,7 +19,7 @@ export function modelsDir() {
  * development we look in resources/bin (copied by `npm run build:native`) and
  * then straight in Cargo's target directory.
  */
-export function nativeBinary(name: 'quill-native' | 'quill-engine-cpu' | 'quill-engine-vulkan'): string | null {
+export function nativeBinary(name: 'quill-native' | 'quill-engine-cpu' | 'quill-engine-compat' | 'quill-engine-vulkan'): string | null {
   const root = app.getAppPath();
   const candidates = app.isPackaged
     ? [join(process.resourcesPath, 'bin', name + exe)]

@@ -66,18 +66,18 @@ Captured audio is trimmed with an adaptive voice-activity detector and level-nor
 
 ## Building
 
-Requirements: Node 22+, Rust (stable), and — for the GPU engine on Windows — the [Vulkan SDK](https://vulkan.lunarg.com/).
+Requirements: Node 22+, Rust (stable), CMake, LLVM/libclang (for whisper.cpp bindings) and — for the GPU engine — the [Vulkan SDK](https://vulkan.lunarg.com/).
 
 ```bash
 npm install
-npm run build:native            # quill-native + CPU engine → resources/bin
-npm run build:native -- --vulkan  # also the Vulkan GPU engine
+npm run build:native                       # quill-native + CPU engine → resources/bin
+npm run build:native -- --vulkan --compat  # also the Vulkan GPU engine and the pre-AVX2 CPU engine
 npm run dev                     # run Quill with hot-reloading renderers
 npm test                        # unit tests (recommendations, audio, text)
 npm run dist:win                # Windows installer → release/
 ```
 
-The GitHub Actions workflow builds the native sidecars (CPU + Vulkan) and the installer on `windows-latest` and uploads it as an artifact.
+Engine builds are portable: whisper.cpp is compiled for an AVX2/FMA/F16C baseline (never `-march=native`), plus a compatibility build for processors without AVX2 that Quill selects automatically. The GitHub Actions workflow builds all three engines and the installer on `windows-latest` and uploads it as an artifact.
 
 ## Project layout
 

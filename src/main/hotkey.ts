@@ -30,12 +30,15 @@ export class Hotkey extends EventEmitter {
   async apply(spec: string) {
     this.spec = spec;
     this.error = null;
-    if (this.native?.supportsHotkey) {
+    if (this.native?.isWindowsHelper) {
       try {
+        // Also retries the hook install if it failed before.
         await this.native.setHotkey(spec);
-        this.usingNative = true;
-        this.unregisterFallback();
-        return;
+        if (this.native.supportsHotkey) {
+          this.usingNative = true;
+          this.unregisterFallback();
+          return;
+        }
       } catch (e) {
         log.warn(`native hotkey: ${(e as Error).message}`);
       }

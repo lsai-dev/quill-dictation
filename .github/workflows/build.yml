@@ -28,6 +28,9 @@ jobs:
   windows:
     name: Windows installer
     runs-on: windows-latest
+    env:
+      # bindgen (whisper-rs-sys) needs libclang; the runner image ships LLVM here.
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -45,8 +48,8 @@ jobs:
           install_runtime: false
           cache: true
           stripdown: true
-      - name: Build native sidecars (CPU + Vulkan)
-        run: node scripts/build-native.mjs --vulkan
+      - name: Build native sidecars (CPU, compatibility CPU, Vulkan)
+        run: node scripts/build-native.mjs --vulkan --compat
       - name: Native unit tests
         working-directory: native
         run: cargo test -p quill-native

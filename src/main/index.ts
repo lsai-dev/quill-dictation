@@ -117,6 +117,7 @@ async function main() {
 
   async function refreshHardware() {
     hardware = await detectHardware(native.available ? native : null, engine.hasGpuBuild());
+    engine.setCpuFeatures({ avx2: hardware.cpu.avx2 || hardware.cpu.neon });
     recs = recommend(hardware, settings.get().language, settings.get().engine);
     log.info(`hardware: ${hardware.cpu.brand}, ${(hardware.totalMemory / 2 ** 30).toFixed(1)} GB, gpus=[${hardware.gpus.map((g) => g.name).join(', ')}], vulkan=${hardware.vulkan} → ${recs.recommended.modelId} on ${recs.device}`);
     broadcast();

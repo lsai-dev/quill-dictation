@@ -36,7 +36,14 @@ export class Engine extends EventEmitter {
   private wanted: Target | null = null;
   private loading: Promise<void> | null = null;
   private gpuFailures = 0;
+  /** The fast CPU build needs AVX2; older processors get the compatibility build. */
+  private cpuCompat = false;
   status: EngineStatus = { state: 'idle' };
+
+  /** Tell the engine what the processor supports (from the hardware probe). */
+  setCpuFeatures(f: { avx2: boolean }) {
+    this.cpuCompat = !f.avx2 && !!nativeBinary('quill-engine-compat');
+  }
 
   private setStatus(s: EngineStatus) {
     this.status = s;
@@ -48,7 +55,7 @@ export class Engine extends EventEmitter {
   }
 
   hasAnyBuild() {
-    return !!(nativeBinary('quill-engine-cpu') || nativeBinary('quill-engine-vulkan'));
+    return !!(nativeBinary('quill-engine-cpu') || nativeBinary('quill-engine-compat') || nativeBinary('quill-engine-vulkan'));
   }
 
   /** Make sure `path` is loaded on the preferred device. Idempotent. */
@@ -100,10 +107,11 @@ export class Engine extends EventEmitter {
     this.setStatus({ state: 'ready', modelId: t.modelId, device: t.device, loadMs: r.load_ms ?? Date.now() - started });
   }
 
-  private async spawn(variant: 'vulkan' | 'cpu') {
+  private async spawn(variant: 'vulkan' | 'cpu'): Promise<void> {
     await this.proc?.stop();
     this.loaded = null;
-    const bin = nativeBinary(variant === 'vulkan' ? 'quill-engine-vulkan' : 'quill-engine-cpu');
+    const name = variant === 'vulkan' ? 'quill-engine-vulkan' : this.cpuCompat ? 'quill-engine-compat' : 'quill-engine-cpu';
+    const bin = nativeBinary(name) ?? (variant === 'cpu' ? nativeBinary('quill-engine-compat') : null);
     if (!bin) throw new Error(`Transcription engine (${variant}) is missing from this installation`);
     const proc = new LineProcess(`engine:${variant}`, bin);
     proc.on('exit', (code: number | null) => {
@@ -114,7 +122,19 @@ export class Engine extends EventEmitter {
     });
     this.proc = proc;
     this.variant = variant;
-    const ready = await proc.start(20000);
+    let ready;
+    try {
+      ready = await proc.start(20000);
+    } catch (e) {
+      // An "illegal instruction" crash means this CPU lacks an instruction set the
+      // fast build assumes; switch to the compatibility build and try once more.
+      if (variant === 'cpu' && !this.cpuCompat && nativeBinary('quill-engine-compat') && isIllegalInstruction(e as Error)) {
+        log.warn('CPU engine crashed with an illegal instruction; using the compatibility engine');
+        this.cpuCompat = true;
+        return this.spawn('cpu');
+      }
+      throw e;
+    }
     log.info(`engine ${variant} ready: ${String(ready.system_info ?? '').slice(0, 160)}`);
   }
 
@@ -158,6 +178,11 @@ export class Engine extends EventEmitter {
   get modelId() {
     return this.loaded?.modelId ?? null;
   }
+}
+
+function isIllegalInstruction(e: Error) {
+  // Windows STATUS_ILLEGAL_INSTRUCTION (0xC000001D) or POSIX SIGILL.
+  return /3221225501|-1073741795|SIGILL/.test(e.message);
 }
 
 function same(a: Target, b: Target) {

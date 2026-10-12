@@ -36,7 +36,8 @@ export interface DeviceSpeed {
 
 export function cpuSpeed(hw: HardwareProfile): number {
   const cores = Math.max(1, Math.min(hw.cpu.physicalCores || hw.cpu.logicalCores / 2 || 1, 8));
-  let simd = 0.45; // SSE-only machines are much slower
+  // Measured: whisper.cpp's SSE-only build is ~8× slower than its AVX2 build.
+  let simd = 0.13;
   if (hw.cpu.avx2) simd = hw.cpu.avx512 ? 1.15 : 1.0;
   else if (hw.cpu.neon) simd = 0.9;
   // Threads scale sub-linearly (memory bandwidth); SMT adds a little.
@@ -148,17 +149,18 @@ export function recommend(hw: HardwareProfile, language: string, pref: EnginePre
 
   const balanced = pickBy(pool, (a, b) => balancedScore(a.m, a.e, language, d.memoryBudget) > balancedScore(b.m, b.e, language, d.memoryBudget));
 
-  const tolerable = pool.filter((r) => r.e.latencySec <= 4);
-  const accuracy = pickBy(tolerable.length ? tolerable : pool, (a, b) =>
+  // On slow machines nothing is "fast", so limits scale with the quickest option.
+  const quickest = Math.min(...pool.map((r) => r.e.latencySec));
+  const tolerable = pool.filter((r) => r.e.latencySec <= Math.max(4, quickest * 1.8));
+  const accuracy = pickBy(tolerable, (a, b) =>
     acc(a) > acc(b) + 0.01 || (Math.abs(acc(a) - acc(b)) <= 0.01 && a.e.latencySec < b.e.latencySec));
 
   // Fastest: the quickest model, preferring the more accurate one when the
   // difference is imperceptible (< 150 ms).
-  const quickest = Math.min(...pool.map((r) => r.e.latencySec));
   const speed = pickBy(pool.filter((r) => r.e.latencySec <= quickest + 0.15), (a, b) => acc(a) > acc(b));
 
   const decent = pool.filter((r) => acc(r) >= 70);
-  const memoryPool = (decent.length ? decent : pool).filter((r) => r.e.latencySec <= 3);
+  const memoryPool = (decent.length ? decent : pool).filter((r) => r.e.latencySec <= Math.max(3, quickest * 1.8));
   const memory = pickBy(memoryPool.length ? memoryPool : pool, (a, b) =>
     a.m.memoryBytes < b.m.memoryBytes || (a.m.memoryBytes === b.m.memoryBytes && acc(a) > acc(b)));
 
