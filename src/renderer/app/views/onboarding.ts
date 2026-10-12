@@ -282,7 +282,10 @@ export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
     unsub = subscribe((snap) => {
       const id = snap.settings.modelId;
       const dl = snap.downloads.find((d) => d.state === 'downloading');
-      if (dl) wait.textContent = `Your model is still downloading (${Math.floor((dl.received / Math.max(1, dl.total)) * 100)}%). Dictation will work as soon as it finishes.`;
+      const pct = dl ? Math.floor((dl.received / Math.max(1, dl.total)) * 100) : 0;
+      const dictationHere = !!id && !!snap.models.find((m) => m.id === id)?.installed;
+      if (dl && dictationHere) wait.textContent = `Cleanup is still downloading (${pct}%). Dictation already works — polishing starts when it’s done.`;
+      else if (dl) wait.textContent = `Your model is still downloading (${pct}%). Dictation will work as soon as it finishes.`;
       else if (!id) wait.textContent = 'Choose a model first — you can do this any time in Models.';
       else if (snap.engine.state === 'loading') wait.textContent = 'Getting the model ready…';
       else if (snap.settings.cleanup && snap.cleanupEngine.state === 'ready') wait.textContent = 'Cleanup is on: Quill will tidy fillers and punctuation before inserting.';
