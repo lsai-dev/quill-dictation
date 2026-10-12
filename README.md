@@ -91,7 +91,7 @@ npm version 0.2.0 --no-git-tag-version   # bump package.json
 git commit -am "Quill 0.2.0" && git tag v0.2.0 && git push && git push origin v0.2.0
 ```
 
-The tag triggers CI to build the installer (or run the **Build** workflow manually with *release* ticked), publish the GitHub Release (installer, blockmap and `latest.yml` feed) and then self-test the live feed: the freshly built app pretends to be an older version, finds the release and downloads it. Updates need the repository (or its releases) to be public.
+The tag triggers CI to build the installer (or run the **Build** workflow manually with *release* ticked). Only once the end-to-end dictation test passes does it publish the GitHub Release (installer, blockmap and `latest.yml` feed), and it then self-tests the live feed: the freshly built app pretends to be an older version, finds the release and downloads it. Updates need the repository (or its releases) to be public.
 
 ## Project layout
 

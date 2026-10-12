@@ -79,23 +79,13 @@ jobs:
       - run: npm ci
       - run: npm run typecheck
       - run: npm test
-      - name: Package (and publish on version tags)
+      - name: Package
         shell: bash
         run: |
           npm run build
-          if [[ "$GITHUB_REF" == refs/tags/v* || "$RELEASE" == "true" ]]; then PUBLISH=always; else PUBLISH=never; fi
-          if [[ "$PUBLISH" == always && "$GITHUB_REF" != refs/tags/v* ]]; then
-            # A manual release: tag the commit being built first, or GitHub would
-            # tag the tip of the default branch instead.
-            TAG="v$(node -p "require('./package.json').version")"
-            gh api "repos/$GITHUB_REPOSITORY/git/refs/tags/$TAG" > /dev/null 2>&1 \
-              || gh api "repos/$GITHUB_REPOSITORY/git/refs" -f ref="refs/tags/$TAG" -f sha="$GITHUB_SHA" > /dev/null
-          fi
-          npx electron-builder --win --x64 --publish "$PUBLISH"
+          npx electron-builder --win --x64 --publish never
         env:
           CSC_IDENTITY_AUTO_DISCOVERY: "false"
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE: ${{ inputs.release }}
       - uses: actions/upload-artifact@v4
         with:
           name: Quill-Windows
@@ -133,6 +123,38 @@ jobs:
             e2e/*.png
             e2e/*.log
           if-no-files-found: ignore
+      # Publishing comes after the end-to-end test, so a build that fails it never
+      # reaches anyone's in-app updates. All three files go up in one gh call: the
+      # installer, its blockmap (differential downloads) and latest.yml (the update
+      # feed). electron-builder's own publisher races itself on Windows builds.
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "$TAG" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $VERSION"
+            exit 1
+          fi
+          FILES=("release/Quill-Setup-$VERSION.exe" "release/Quill-Setup-$VERSION.exe.blockmap" release/latest.yml)
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+            if [[ -z "$(gh release view "$TAG" --json body -q .body)" ]]; then
+              gh release edit "$TAG" --title "Quill $VERSION" --notes-file resources/release-notes.md
+            fi
+          else
+            gh release create "$TAG" "${FILES[@]}" --title "Quill $VERSION" \
+              --notes-file resources/release-notes.md --target "$GITHUB_SHA"
+          fi
+          ASSETS=$(gh release view "$TAG" --json assets -q '.assets[].name')
+          echo "$ASSETS"
+          for f in "${FILES[@]}"; do
+            grep -qx "$(basename "$f")" <<< "$ASSETS" || { echo "::error::$(basename "$f") is missing from the release"; exit 1; }
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
       - name: Note — in-app updates need a public repository
         if: (startsWith(github.ref, 'refs/tags/v') || inputs.release) && github.event.repository.private
         run: echo "::notice::Release published. This repository is private, so installed copies of Quill can't download updates yet. Make the repository public to enable in-app updates."
