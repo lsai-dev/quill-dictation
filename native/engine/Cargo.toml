@@ -1,0 +1,27 @@
+[package]
+name = "quill-engine"
+version = "0.1.0"
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+description = "Quill speech-to-text sidecar (whisper.cpp via whisper-rs)"
+publish = false
+
+[[bin]]
+name = "quill-engine"
+path = "src/main.rs"
+
+[features]
+default = []
+# GPU backends. whisper.cpp falls back to the CPU when no device is found; quill-engine
+# turns that case into an explicit error so the app can decide what to do.
+vulkan = ["whisper-rs/vulkan"]
+cuda = ["whisper-rs/cuda"]
+
+[dependencies]
+serde.workspace = true
+serde_json.workspace = true
+# `raw-api` re-exports whisper-rs-sys, used to enumerate ggml backend devices.
+whisper-rs = { version = "0.16", features = ["raw-api"] }
+num_cpus = "1"
+libc = "0.2"

@@ -1,0 +1,181 @@
+name: Build
+
+on:
+  push:
+    branches: [main, "claude/**"]
+    # Pushing a tag like v0.2.0 (matching package.json) publishes a release.
+    tags: ["v*"]
+  pull_request:
+  workflow_dispatch:
+    inputs:
+      release:
+        description: Publish a GitHub Release for the version in package.json
+        type: boolean
+        default: false
+
+jobs:
+  check:
+    name: Typecheck & test
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - run: npm run build
+      - uses: dtolnay/rust-toolchain@stable
+      - name: Native unit tests
+        working-directory: native
+        run: cargo test -p quill-native
+
+  windows:
+    name: Windows installer
+    runs-on: windows-latest
+    permissions:
+      contents: write # publish GitHub Releases on version tags
+    env:
+      # bindgen (whisper-rs-sys) needs libclang; the runner image ships LLVM here.
+      LIBCLANG_PATH: C:\Program Files\LLVM\bin
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: native
+          # Bump when the CMake generator/config for whisper.cpp changes; cargo does
+          # not track those env vars, so a stale cache would keep old engine builds.
+          key: ninja-release-1
+      - name: MSVC developer environment (cl + ninja on PATH)
+        uses: ilammy/msvc-dev-cmd@v1
+      - name: Install Vulkan SDK (for the GPU engine)
+        uses: jakoch/install-vulkan-sdk-action@v1
+        with:
+          vulkan_version: 1.4.309.0
+          install_runtime: false
+          cache: true
+          stripdown: true
+      - name: Build native sidecars (helper, CPU and compatibility engines)
+        run: node scripts/build-native.mjs --compat
+      - name: Cache the Vulkan engine build
+        uses: actions/cache@v4
+        with:
+          path: D:\qv
+          key: vulkan-engine-ninja-release-1-${{ runner.os }}-${{ hashFiles('native/Cargo.lock', 'native/engine/**') }}
+      - name: Build the Vulkan GPU engine
+        # Optional at runtime: without it Quill transcribes on the CPU.
+        continue-on-error: true
+        run: node scripts/build-native.mjs --vulkan
+      - name: Native unit tests
+        working-directory: native
+        run: cargo test -p quill-native
+      - run: npm ci
+      - run: npm run typecheck
+      - run: npm test
+      - name: Package
+        shell: bash
+        run: |
+          npm run build
+          npx electron-builder --win --x64 --publish never
+        env:
+          CSC_IDENTITY_AUTO_DISCOVERY: "false"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: Quill-Windows
+          path: |
+            release/*.exe
+            release/*.blockmap
+            release/latest.yml
+          if-no-files-found: error
+      - name: Fetch a test model and a speech sample
+        shell: bash
+        run: |
+          mkdir -p e2e
+          curl -sSfL --retry 3 -o e2e/ggml-tiny.en.bin https://huggingface.co/ggerganov/whisper.cpp/resolve/main/ggml-tiny.en.bin
+          curl -sSfL --retry 3 -o e2e/jfk.wav https://raw.githubusercontent.com/ggml-org/whisper.cpp/master/samples/jfk.wav
+      - name: Engine benchmark (standalone, no Electron)
+        timeout-minutes: 5
+        run: node test/e2e/engine-bench.mjs resources/bin/quill-engine-cpu.exe e2e/ggml-tiny.en.bin e2e/jfk.wav
+      - name: Engine benchmark (Vulkan build, CPU mode)
+        if: hashFiles('resources/bin/quill-engine-vulkan.exe') != ''
+        continue-on-error: true
+        timeout-minutes: 5
+        run: node test/e2e/engine-bench.mjs resources/bin/quill-engine-vulkan.exe e2e/ggml-tiny.en.bin e2e/jfk.wav
+      - name: End-to-end dictation on Windows (hook, engine, paste)
+        timeout-minutes: 8
+        run: node test/e2e/dictation.e2e.mjs
+        env:
+          QUILL_MODEL: e2e/ggml-tiny.en.bin
+          QUILL_AUDIO: e2e/jfk.wav
+          QUILL_SHOTS: e2e
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: e2e-screenshots
+          path: |
+            e2e/*.png
+            e2e/*.log
+          if-no-files-found: ignore
+      # Publishing comes after the end-to-end test, so a build that fails it never
+      # reaches anyone's in-app updates. All three files go up in one gh call: the
+      # installer, its blockmap (differential downloads) and latest.yml (the update
+      # feed). electron-builder's own publisher races itself on Windows builds.
+      - name: Publish the GitHub release
+        if: startsWith(github.ref, 'refs/tags/v') || inputs.release
+        shell: bash
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          TAG="v$VERSION"
+          if [[ "$GITHUB_REF" == refs/tags/v* && "$GITHUB_REF_NAME" != "$TAG" ]]; then
+            echo "::error::Tag $GITHUB_REF_NAME doesn't match package.json version $VERSION"
+            exit 1
+          fi
+          FILES=("release/Quill-Setup-$VERSION.exe" "release/Quill-Setup-$VERSION.exe.blockmap" release/latest.yml)
+          # Two releases on one tag (left by an interrupted publish) make the update
+          # feed's download URLs ambiguous: keep the oldest, remove the others.
+          DUPES=$(gh api "repos/$GH_REPO/releases?per_page=100" --jq ".[] | select(.tag_name == \"$TAG\") | .id" | sort -n | tail -n +2)
+          for id in $DUPES; do
+            echo "Removing duplicate release $id for $TAG"
+            gh api -X DELETE "repos/$GH_REPO/releases/$id"
+          done
+          if gh release view "$TAG" > /dev/null 2>&1; then
+            gh release upload "$TAG" "${FILES[@]}" --clobber
+            if [[ -z "$(gh release view "$TAG" --json body -q .body)" ]]; then
+              gh release edit "$TAG" --title "Quill $VERSION" --notes-file resources/release-notes.md
+            fi
+          else
+            gh release create "$TAG" "${FILES[@]}" --title "Quill $VERSION" \
+              --notes-file resources/release-notes.md --target "$GITHUB_SHA"
+          fi
+          ASSETS=$(gh release view "$TAG" --json assets -q '.assets[].name')
+          echo "$ASSETS"
+          for f in "${FILES[@]}"; do
+            grep -qx "$(basename "$f")" <<< "$ASSETS" || { echo "::error::$(basename "$f") is missing from the release"; exit 1; }
+          done
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          GH_REPO: ${{ github.repository }}
+      - name: Note — in-app updates need a public repository
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release) && github.event.repository.private
+        run: echo "::notice::Release published. This repository is private, so installed copies of Quill can't download updates yet. Make the repository public to enable in-app updates."
+      - name: Update feed self-test (the released app finds and downloads itself)
+        if: (startsWith(github.ref, 'refs/tags/v') || inputs.release) && !github.event.repository.private
+        shell: pwsh
+        run: |
+          $out = Join-Path $PWD 'e2e/update-selftest.json'
+          $env:QUILL_UPDATE_SELFTEST = $out
+          $env:QUILL_UPDATE_SELFTEST_FROM = '0.0.1'
+          Start-Process -FilePath 'release/win-unpacked/Quill.exe' -Wait
+          Get-Content $out
+          $r = Get-Content $out | ConvertFrom-Json
+          $version = (Get-Content package.json | ConvertFrom-Json).version
+          if (-not $r.ok) { throw "update check failed: $($r.error) (is the repository public?)" }
+          if (-not $r.isUpdateAvailable -or $r.latestVersion -ne $version) { throw "expected update $version, got $($r.latestVersion)" }
+          if (-not $r.downloaded) { throw 'update did not download' }

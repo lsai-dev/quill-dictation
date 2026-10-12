@@ -1,0 +1,105 @@
+:root {
+  --accent: #7d66ff;
+  --label: rgba(28, 28, 30, 0.88);
+  --pill: rgba(255, 255, 255, 0.86);
+  --pill-edge: rgba(0, 0, 0, 0.07);
+  --shadow: 0 6px 18px rgba(20, 16, 40, 0.10), 0 1px 3px rgba(20, 16, 40, 0.08);
+  --btn: rgba(255, 255, 255, 0.92);
+  --btn-fg: rgba(28, 28, 30, 0.72);
+  --spring: cubic-bezier(0.18, 1.3, 0.32, 1);
+  --ease: cubic-bezier(0.25, 0.1, 0.25, 1);
+  --ry: 58px;
+}
+body.dark {
+  --label: rgba(245, 245, 247, 0.92);
+  --pill: rgba(38, 38, 42, 0.84);
+  --pill-edge: rgba(255, 255, 255, 0.09);
+  --shadow: 0 6px 20px rgba(0, 0, 0, 0.35), 0 1px 3px rgba(0, 0, 0, 0.3);
+  --btn: rgba(52, 52, 58, 0.94);
+  --btn-fg: rgba(245, 245, 247, 0.8);
+}
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+  background: transparent;
+  user-select: none;
+  -webkit-user-select: none;
+  cursor: default;
+  font-family: "Segoe UI Variable Text", "Segoe UI", -apple-system, BlinkMacSystemFont, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+canvas { position: fixed; inset: 0; width: 100%; height: 100%; pointer-events: none; }
+
+/* The recording indicator: steady, legible over any window. */
+.status {
+  position: fixed;
+  left: 50%;
+  top: 108px;
+  height: 22px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 0 10px 0 9px;
+  border-radius: 11px;
+  background: var(--pill);
+  border: 0.5px solid var(--pill-edge);
+  box-shadow: var(--shadow);
+  color: var(--label);
+  font-size: 11.5px;
+  font-weight: 600;
+  letter-spacing: 0.01em;
+  white-space: nowrap;
+  opacity: 0;
+  transform: translate(-50%, 5px) scale(0.94);
+  transition: opacity 220ms var(--ease), transform 520ms var(--spring), padding 300ms var(--ease);
+  pointer-events: none;
+}
+.status.visible { opacity: 1; transform: translate(-50%, 0) scale(1); }
+.status .dot {
+  flex: none;
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--accent);
+  box-shadow: 0 0 0 2.5px color-mix(in srgb, var(--accent) 22%, transparent);
+  transition: transform 260ms var(--spring), opacity 180ms var(--ease), margin 260ms var(--ease);
+}
+.status:not(.recording) .dot { transform: scale(0); opacity: 0; margin-right: -12px; }
+.status:not(.recording) { padding-left: 10px; }
+.label { transition: opacity 160ms var(--ease); }
+.label.swap { opacity: 0; }
+
+/* Controls emerge from behind the ribbon on hover. */
+.ctrl {
+  position: fixed;
+  top: var(--ry);
+  width: 28px;
+  height: 28px;
+  padding: 0;
+  border: 0.5px solid var(--pill-edge);
+  border-radius: 50%;
+  background: var(--btn);
+  color: var(--btn-fg);
+  box-shadow: var(--shadow);
+  display: grid;
+  place-items: center;
+  opacity: 0;
+  pointer-events: none;
+  transition: opacity 160ms var(--ease), transform 480ms var(--spring), background 120ms var(--ease);
+  outline: none;
+}
+#cancel { left: 30px; transform: translate(26px, -50%) scale(0.55); }
+#stop { right: 30px; transform: translate(-26px, -50%) scale(0.55); }
+.ctrl.primary { color: var(--accent); }
+body.hover.active .ctrl { opacity: 1; pointer-events: auto; transform: translate(0, -50%) scale(1); }
+body.hover.active #stop { transition-delay: 30ms; }
+body.no-stop .ctrl#stop { opacity: 0 !important; pointer-events: none !important; }
+.ctrl:hover { background: color-mix(in srgb, var(--btn) 82%, var(--accent)); }
+.ctrl:active { transform: translate(0, -50%) scale(0.9) !important; transition-duration: 90ms; }
+
+@media (prefers-reduced-motion: reduce) {
+  .status, .ctrl { transition-duration: 160ms !important; transition-timing-function: var(--ease) !important; }
+}

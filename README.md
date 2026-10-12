@@ -1,2 +1,119 @@
-# quill-dictation
-A polished, open-source voice dictation app that runs on local models.
+<p align="center">
+  <img src="resources/icon.png" width="128" height="128" alt="Quill">
+</p>
+
+<h1 align="center">Quill</h1>
+<p align="center"><b>Your voice, written — instantly and privately.</b><br>
+Press <kbd>Win</kbd> + <kbd>Space</kbd>, speak, and your words appear wherever you type. Everything runs on your PC.</p>
+
+---
+
+## What it is
+
+Quill is a voice-dictation app for Windows that uses **only local AI models**. There is no account, no cloud, no upload: audio is captured, transcribed by [whisper.cpp](https://github.com/ggml-org/whisper.cpp) on your own processor or graphics card, and the text is inserted at your cursor.
+
+- **Win + Space, anywhere.** Tap to start and tap to finish — or hold while you speak and release. `Esc` cancels.
+- **Tuned to your PC.** Quill reads your processor, memory and graphics card and recommends the model that suits them, with clear picks for *Recommended*, *Highest accuracy*, *Fastest* and *Lightest*.
+- **It just works.** The GPU engine is used automatically when it's clearly faster; if it can't start (or ever crashes) Quill falls back to the CPU without you noticing. Downloads resume and are verified. Your clipboard is restored after inserting.
+- **A living indicator.** A small ribbon of pearlescent glass that responds to your voice.
+
+## The ribbon
+
+Quill's identity is a tiny floating ribbon of folded glass — pearl on the outside, lit by a soft violet light within. It's a real 3D surface: the ribbon is deformed in a vertex shader, normals come from the deformed surface, and the material combines thin-film iridescence, Fresnel reflection of a studio environment, and violet light that leaks out wherever the glass bends or twists. Overlapping folds are composited with depth peeling so translucent layers stack correctly, and it casts a soft projected shadow.
+
+It is always **one continuous object**: every state is a set of spring targets (SwiftUI-style `response`/`dampingFraction` springs), so transitions are never cuts — only the same thing changing shape.
+
+| State | What you see |
+|---|---|
+| **Activating** | A point of light unfolds into the ribbon along its own path, with a soft spring. |
+| **Listening** | The ribbon holds its shape with a barely-there breath. A steady **● Listening** label makes the open mic unmistakable. |
+| **Speaking** | Your voice launches waves from the centre that travel out to the tips. Quiet speech makes delicate ripples; louder speech makes broader bends. A short voice-energy history drives the waves, so syllables visibly travel. |
+| **Processing** | It curls into a loose loop; a glint of light circles the fold. |
+| **Text inserted** | One satisfying settle, a single sweep of light, then it folds back into a point and is gone. |
+| **Error** | A small head-shake and a plain-language message. |
+
+Design rules it follows: a stable footprint (it animates inside a fixed window and never moves over your work); controls (cancel ✕, finish ■) emerge beside it only on hover; the window is click-through everywhere else and never steals focus; one material, one accent colour. **Reduced motion** (Windows "Animation effects" off, or Settings › Motion) keeps the silhouette still and carries every state through light alone. Machines without WebGL2 — or whose GPU context is lost — get an SVG ribbon with the same choreography, swapped in mid-flight.
+
+Try it in a browser: `npx vite`, then open `http://localhost:5199/playground.html`.
+
+## Hardware-aware recommendations
+
+Quill estimates, for every model, the time to transcribe a typical 10-second sentence and the memory it needs on *your* machine (calibrated against whisper.cpp benchmarks; see `src/shared/recommend.ts`):
+
+- **Device:** a discrete GPU with ≥ 2 GB VRAM and a Vulkan driver → GPU; integrated graphics → CPU (it's usually not faster); the choice can be overridden in Settings.
+- **Fit:** models must fit comfortably in VRAM (GPU) or in a share of available RAM (CPU).
+- **Picks:** *Recommended* balances accuracy, latency, memory and download size; *Highest accuracy* is the most accurate model that still answers within ~4 s; *Fastest* and *Lightest* do what they say.
+
+Examples: an RTX 3060 gets *Large · Compact* on the GPU in ~0.7 s; a 4-core Iris Xe ultrabook gets *Small · Compact* on the CPU; a 4 GB Celeron laptop gets *Tiny*.
+
+## Architecture
+
+```
+Electron main (TypeScript)               native/ (Rust)
+├─ dictation state machine               ├─ quill-native   ← Win32: WH_KEYBOARD_LL hook (Win+Space,
+├─ hotkey (native hook / fallback)       │                    Start-menu suppression, Esc capture),
+├─ engine manager ─ GPU→CPU fallback ──▶ │                    SendInput paste/type, DXGI GPU probe
+├─ model downloads (resume + SHA-256)    └─ quill-engine   ← whisper.cpp (CPU and Vulkan builds),
+├─ hardware profile + recommendations                         JSON-lines protocol over stdio
+└─ windows: overlay (transparent, non-activating, click-through) · app (Mica)
+
+Renderers (Vite + TypeScript, no framework)
+├─ overlay: ribbon (WebGL2) + AudioWorklet capture at 16 kHz + synthesized sounds
+└─ app: onboarding, Home, Models, Settings
+```
+
+Captured audio is trimmed with an adaptive voice-activity detector and level-normalized before transcription; nothing is sent when no speech is detected. Transcripts are cleaned of Whisper's non-speech annotations and stock hallucinations, support "new line" / "new paragraph", and get smart spacing when you keep dictating into the same window.
+
+## Building
+
+Requirements: Node 22+, Rust (stable), CMake, LLVM/libclang (for whisper.cpp bindings) and — for the GPU engine — the [Vulkan SDK](https://vulkan.lunarg.com/).
+
+```bash
+npm install
+npm run build:native                       # quill-native + CPU engine → resources/bin
+npm run build:native -- --vulkan --compat  # also the Vulkan GPU engine and the pre-AVX2 CPU engine
+npm run dev                     # run Quill with hot-reloading renderers
+npm test                        # unit tests (recommendations, audio, text)
+npm run dist:win                # Windows installer → release/
+```
+
+Engine builds are portable: whisper.cpp is compiled for an AVX2/FMA/F16C baseline (never `-march=native`), plus a compatibility build for processors without AVX2 that Quill selects automatically. The GitHub Actions workflow builds all three engines and the installer on `windows-latest` and uploads it as an artifact.
+
+## Releases and updates
+
+Quill updates itself. A few seconds after launch (and every few hours) it checks this repository's GitHub Releases; when a newer version exists it says so in the app, the tray and a notification, downloads **only the changed parts** of the installer when you click Download (differential updates via blockmaps), and installs on **Restart to Update** — or automatically the next time Quill quits. It never restarts mid-dictation, and your settings and voice models are left untouched.
+
+To ship a version:
+
+```bash
+npm version 0.2.0 --no-git-tag-version   # bump package.json
+# edit resources/release-notes.md          # shown on GitHub and in the in-app prompt
+git commit -am "Quill 0.2.0" && git tag v0.2.0 && git push && git push origin v0.2.0
+```
+
+The tag triggers CI to build the installer (or run the **Build** workflow manually with *release* ticked). Only once the end-to-end dictation test passes does it publish the GitHub Release (installer, blockmap and `latest.yml` feed), and it then self-tests the live feed: the freshly built app pretends to be an older version, finds the release and downloads it. Updates need the repository (or its releases) to be public.
+
+## Project layout
+
+```
+src/main/        Electron main process
+src/preload/     contextBridge APIs (sandboxed renderers)
+src/renderer/    ribbon/, overlay/, app/, playground/
+src/shared/      models catalog, recommendations, audio + text processing (unit-tested)
+native/          Rust sidecars
+resources/       icons (rendered from the real ribbon: `npm run icons`)
+```
+
+## Known limitations
+
+- **Administrator windows.** Windows doesn't let a normal app's keyboard hook or synthetic input reach windows running as administrator, so Win + Space and pasting don't work while an elevated app is focused.
+- **First run needs one download.** Models aren't bundled (they're 57 MB – 3 GB); Quill downloads the one you pick, once.
+- **Win + Space is Windows-only.** On macOS and Linux Quill falls back to a standard global shortcut (press to start, press to finish).
+
+## Privacy
+
+Speech recognition runs entirely on your device. Quill makes exactly one kind of network request: downloading a model you choose, from the whisper.cpp model repository. Recent dictations are kept in memory only and vanish when Quill quits.
+
+## License
+
+MIT
