@@ -21,8 +21,22 @@ export const BRAND_MARK = `<svg viewBox="0 0 48 24" aria-hidden="true">
   <path d="M5 15.4C10 11 17 10.4 22.5 12.8" fill="none" stroke="#fff" stroke-width=".9" stroke-linecap="round" opacity=".9"/>
 </svg>`;
 
+// Motion follows Settings › Motion, or the system's preference when that's "System".
+const systemReduced = matchMedia('(prefers-reduced-motion: reduce)');
+function applyMotion() {
+  const pref = snapshot()?.settings.motion ?? 'system';
+  const reduced = pref === 'reduced' || (pref === 'system' && systemReduced.matches);
+  const next = reduced ? 'reduced' : 'full';
+  if (document.documentElement.dataset.motion === next) return;
+  document.documentElement.dataset.motion = next;
+  window.dispatchEvent(new CustomEvent('quill:motion', { detail: reduced }));
+}
+
 async function boot() {
   await initStore();
+  applyMotion();
+  systemReduced.addEventListener('change', applyMotion);
+  subscribe(applyMotion);
   const root = document.getElementById('root')!;
   const first = (params.get('section') as Section) || 'home';
 

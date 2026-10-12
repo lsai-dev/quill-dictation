@@ -358,6 +358,8 @@ export function recommendSetup(
         cleanupScore(cleanupModelById(b.modelId)!, b, ram) > cleanupScore(cleanupModelById(a.modelId)!, a, ram) ? b : a)
     : null;
   const cm = best ? cleanupModelById(best.modelId)! : null;
+  const runnable = estimates.filter((e) => e.supported && e.fits);
+  const fallback = !best && runnable.length ? runnable.reduce((a, b) => (b.latencySec < a.latencySec ? b : a)) : null;
   const memoryBytes =
     dictation.memoryBytes + ENGINE_RUNTIME_BYTES + (best ? best.memoryBytes + ENGINE_RUNTIME_BYTES : 0);
 
@@ -365,6 +367,7 @@ export function recommendSetup(
     dictationId: dictation.id,
     cleanupId: best?.modelId ?? null,
     cleanup: best,
+    cleanupFallbackId: fallback?.modelId ?? null,
     cleanupEstimates: estimates,
     totalLatencySec: Math.round((dictEst.latencySec + (best?.latencySec ?? 0)) * 100) / 100,
     memoryBytes,
@@ -385,5 +388,5 @@ function cleanupReason(hw: HardwareProfile, language: string, all: CleanupEstima
   if (!candidates.length) return `None of the cleanup models handle ${language === 'auto' ? 'every language' : 'this language'} well yet.`;
   if (!candidates.some((e) => e.fits)) return 'Cleanup needs more free memory than this PC has next to your dictation model.';
   const quickest = Math.min(...candidates.filter((e) => e.fits).map((e) => e.latencySec));
-  return `Cleanup would add about ${Math.max(1, Math.round(quickest))} seconds to each dictation on this PC, so it’s off by default.`;
+  return `Cleanup would add about ${Math.max(1, Math.round(quickest))} seconds to each dictation on this PC, so it’s off unless you turn it on.`;
 }

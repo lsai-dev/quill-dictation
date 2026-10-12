@@ -52,6 +52,8 @@ export class CleanupEngine extends EventEmitter {
   private loading: Promise<void> | null = null;
   private gpuFailures = 0;
   private threads = 0;
+  /** The dictation language, so the instructions primed at load are the ones used. */
+  private language = 'en';
   /** The `clean` request in flight, so it can be cancelled. */
   private active: number | null = null;
   /** Bumped by cancel(); a polish started under an older generation stops. */
@@ -69,6 +71,14 @@ export class CleanupEngine extends EventEmitter {
 
   setThreads(n: number) {
     this.threads = n;
+  }
+
+  /** Re-primes the cached instructions for a new dictation language (in the background). */
+  setLanguage(language: string) {
+    if (language === this.language) return;
+    this.language = language;
+    const spec = cleanupModelById(this.loaded?.modelId);
+    if (spec && this.ready) void this.proc!.request('prime', { prefix: cleanupPrefix(spec, language) }, undefined, 120000).catch(() => undefined);
   }
 
   get modelId() {
@@ -124,7 +134,7 @@ export class CleanupEngine extends EventEmitter {
     await this.proc!.request('load', { model: t.path, gpu: t.device === 'gpu', threads: this.threads, ctx: 4096 }, undefined, 180000);
     // Read the instructions once now, so the first dictation only pays for itself.
     const spec = cleanupModelById(t.modelId);
-    if (spec) await this.proc!.request('prime', { prefix: cleanupPrefix(spec) }, undefined, 120000);
+    if (spec) await this.proc!.request('prime', { prefix: cleanupPrefix(spec, this.language) }, undefined, 120000);
     this.loaded = t;
     const loadMs = Date.now() - started;
     log.info(`cleanup: loaded ${t.modelId} on ${t.device} in ${loadMs} ms`);
@@ -199,7 +209,7 @@ export class CleanupEngine extends EventEmitter {
         out.push(c.text + c.sep);
         continue;
       }
-      const p = buildCleanupPrompt(spec.format, c.text);
+      const p = buildCleanupPrompt(spec.format, c.text, opts.language);
       const req = this.proc.send<Cleaned>(
         'clean',
         { prefix: p.prefix, prompt: p.prompt, lookup: c.text, max_tokens: p.maxTokens, stop: p.stop },

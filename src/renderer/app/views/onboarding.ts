@@ -1,9 +1,11 @@
-import { formatBytes, modelById } from '../../../shared/models';
+import { formatBytes } from '../../../shared/models';
 import { formatLatency } from '../../../shared/recommend';
 import type { AppSnapshot } from '../../../shared/types';
 import { AnyRibbon, createRibbon } from '../../ribbon';
+import { addsLatency, downloadLabel, etaText, modelName, setupState } from '../setup';
 import { api, snapshot, subscribe } from '../store';
-import { h, icons, keycaps, ring, svg } from '../ui';
+import { h, icons, keycaps, progressBar, reducedMotion, svg, toggle } from '../ui';
+import { CleanupExample } from './example';
 
 /**
  * First run. Four calm steps: hello → tuned to your PC → your voice → try it.
@@ -21,7 +23,7 @@ export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
     try {
       ribbon = createRibbon(canvas, { viewHeight: 1.9, anchorY: 0.5, persistent: true });
       ribbon.setDark(matchMedia('(prefers-color-scheme: dark)').matches);
-      ribbon.setReducedMotion(matchMedia('(prefers-reduced-motion: reduce)').matches);
+      ribbon.setReducedMotion(reducedMotion());
       setTimeout(() => ribbon?.show(), 350);
       // Pause while a dictation runs (the "Try it" step): the overlay is the focus.
       api.onDictationPhase((phase) => (phase === 'idle' ? ribbon?.start() : ribbon?.stop()));
@@ -78,13 +80,9 @@ export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
     );
   }
 
-  // ── Step 2: hardware & recommendation ─────────────────────────────────────
+  // ── Step 2: hardware & the recommended setup ──────────────────────────────
   function tuned() {
     const list = h('ul', { class: 'ob-scan' });
-    const rec = h('div', { class: 'ob-rec' });
-    const actions = h('div', { class: 'ob-actions' });
-    const step = h('div', { class: 'ob-step' }, h('h1', { class: 'ob-title small' }, 'Tuned to your PC'), h('p', { class: 'ob-body' }, 'Quill looked at your hardware to pick the best voice model for it.'), list, rec, actions);
-
     const s0 = snapshot();
     const hw = s0.hardware;
     const lines: [string, string][] = hw
@@ -95,53 +93,125 @@ export function Onboarding(hooks: { prepare: () => void; done: () => void }) {
         ]
       : [[icons.cpu, 'Your processor']];
     lines.forEach(([icon, text], i) => {
-      const li = h('li', { style: `animation-delay:${160 + i * 220}ms` }, svg(icon, 'icon'), h('span', null, text), svg(icons.check, 'icon ok'));
-      list.append(li);
+      list.append(h('li', { style: `animation-delay:${160 + i * 200}ms` }, svg(icon, 'icon'), h('span', null, text), svg(icons.check, 'icon ok')));
     });
 
-    let downloading = false;
-    let shownFor = '';
-    unsub = subscribe((s) => renderRec(s));
-    function renderRec(s: AppSnapshot) {
-      const r = s.recommendations?.recommended;
-      if (!r) return;
-      const m = modelById(r.modelId)!;
-      const st = s.models.find((x) => x.id === m.id);
-      const dl = s.downloads.find((d) => d.modelId === m.id);
-      // Build the card once (it animates in); afterwards only the actions change.
-      if (shownFor !== m.id) {
-        shownFor = m.id;
-        rec.replaceChildren(
-        h('div', { class: 'ob-rec-card', style: `animation-delay:${200 + lines.length * 220}ms` },
-          h('div', { class: 'pick-goal' }, svg(icons.sparkle, 'icon tiny'), 'Recommended'),
-          h('div', { class: 'ob-rec-name' }, m.name),
-          h('p', { class: 'ob-rec-reason' }, r.reason),
-          h('div', { class: 'chips' }, h('span', { class: 'chip' }, formatBytes(m.sizeBytes) + ' download'), h('span', { class: 'chip' }, formatBytes(m.memoryBytes) + ' memory'), h('span', { class: 'chip' }, formatLatency(r.estimate.latencySec)))),
-        );
-      }
-      if (st?.installed) {
-        actions.replaceChildren(h('button', { class: 'btn primary large', type: 'button', onClick: () => go(2) }, 'Continue'));
-      } else if (dl || downloading) {
-        const ringEl = ring(20);
-        ringEl.set(dl && dl.total ? dl.received / dl.total : 0);
-        actions.replaceChildren(
-          h('div', { class: 'ob-progress' }, ringEl.el, h('span', null, dl ? `Downloading ${Math.floor((dl.received / Math.max(1, dl.total)) * 100)}%` : 'Starting download…')),
-          h('button', { class: 'btn large', type: 'button', onClick: () => go(2) }, 'Continue While It Downloads'),
-        );
+    // The plan, as two quiet lines: what each part does and which model does it.
+    const dName = h('span', { class: 'ob-model' });
+    const dMeta = h('span', { class: 'ob-meta' });
+    const cName = h('span', { class: 'ob-model' });
+    const cMeta = h('span', { class: 'ob-meta' });
+    let cleanupOn = !!s0.setup?.cleanupId;
+    const sw = toggle(cleanupOn, (on) => {
+      cleanupOn = on;
+      if (on) example.play();
+      render(snapshot());
+    }, 'Cleanup');
+    const example = CleanupExample();
+    example.el.classList.add('compact');
+    const exampleWrap = h('div', { class: 'unfold open' }, h('div', { class: 'unfold-inner' }, example.el));
+    const cleanupRow = h(
+      'div',
+      { class: 'ob-role' },
+      h('span', { class: 'role-glyph', 'aria-hidden': 'true' }, svg(icons.sparkle)),
+      h('div', { class: 'ob-role-body' }, h('div', { class: 'ob-role-line' }, h('span', { class: 'ob-role-name' }, 'Cleanup'), cName, cMeta), h('p', { class: 'ob-role-what' }, 'Polishes your words while preserving meaning.')),
+      sw,
+    );
+    const card = h(
+      'div',
+      { class: 'ob-setup', style: `animation-delay:${200 + lines.length * 200}ms` },
+      h(
+        'div',
+        { class: 'ob-role' },
+        h('span', { class: 'role-glyph', 'aria-hidden': 'true' }, svg(icons.mic)),
+        h('div', { class: 'ob-role-body' }, h('div', { class: 'ob-role-line' }, h('span', { class: 'ob-role-name' }, 'Dictation'), dName, dMeta), h('p', { class: 'ob-role-what' }, 'Turns your voice into text.')),
+      ),
+      h('div', { class: 'role-sep', 'aria-hidden': 'true' }),
+      cleanupRow,
+      exampleWrap,
+    );
+
+    const bar = progressBar();
+    const progressNote = h('p', { class: 'ob-progress-note' });
+    const progress = h('div', { class: 'unfold ob-progress' }, h('div', { class: 'unfold-inner' }, h('div', null, bar.el, progressNote)));
+    const message = h('p', { class: 'ob-error', role: 'alert' });
+    const actions = h('div', { class: 'ob-actions' });
+    const note = h('p', { class: 'ob-fine' });
+    const step = h(
+      'div',
+      { class: 'ob-step' },
+      h('h1', { class: 'ob-title small' }, 'Tuned to your PC'),
+      h('p', { class: 'ob-body' }, 'Quill looked at your hardware and chose a setup that runs entirely on it.'),
+      list,
+      card,
+      progress,
+      message,
+      actions,
+      note,
+    );
+
+    let actionsKey = '';
+    unsub = subscribe((s) => render(s));
+    function render(s: AppSnapshot) {
+      const st = setupState(s, cleanupOn);
+      const dEst = s.recommendations?.estimates.find((e) => e.modelId === st.dictationId);
+      dName.textContent = modelName(st.dictationId);
+      dMeta.textContent = dEst ? formatLatency(dEst.latencySec) : '';
+      const offered = !!st.cleanupId;
+      cleanupRow.classList.toggle('off', !st.cleanupOn);
+      sw.disabled = !offered;
+      sw.checked = st.cleanupOn;
+      exampleWrap.classList.toggle('open', offered && st.cleanupOn);
+      example.setLanguage(s.settings.language);
+      if (offered) {
+        const cEst = s.setup?.cleanupEstimates.find((e) => e.modelId === st.cleanupId);
+        cName.textContent = modelName(st.cleanupId);
+        cMeta.textContent = cEst ? addsLatency(cEst.latencySec) + (s.setup?.cleanupId ? '' : ' here') : '';
       } else {
+        cName.textContent = '';
+        cMeta.textContent = 'Not available on this PC';
+      }
+
+      const d = st.downloading;
+      progress.classList.toggle('open', !!d);
+      if (d) {
+        bar.set(d.total ? d.received / d.total : 0, d.state === 'verifying');
+        const n = st.needed.length > 1 ? `${st.needed.indexOf(d.modelId) + 1} of ${st.needed.length}: ` : '';
+        progressNote.textContent = `${n}${modelName(d.modelId)} · ${formatBytes(d.received)} of ${formatBytes(d.total)} · ${etaText(d)}`;
+      }
+      message.textContent = st.failed ? st.failed.error ?? 'The download didn’t finish.' : '';
+      message.hidden = !st.failed;
+
+      const dictationReady = !!s.models.find((m) => m.id === st.dictationId)?.installed;
+      const mode = d ? 'downloading' : st.failed ? 'failed' : st.needed.length ? 'download' : 'done';
+      const key = `${mode}|${dictationReady}|${downloadLabel(st)}`;
+      if (key === actionsKey) return;
+      actionsKey = key;
+      const start = async () => {
+        await api.setSettings({ cleanup: st.cleanupOn, ...(st.cleanupOn && st.cleanupId ? { cleanupModelId: st.cleanupId } : {}) });
+        void api.downloadModels(st.needed);
+      };
+      if (mode === 'downloading') {
         actions.replaceChildren(
-          h('button', {
-            class: 'btn primary large',
-            type: 'button',
-            onClick: async () => {
-              downloading = true;
-              renderRec(snapshot());
-              const res = await api.downloadModel(m.id);
-              downloading = false;
-              if (!res.ok) actions.prepend(h('p', { class: 'ob-error' }, res.error ?? 'Download failed'));
-            },
-          }, svg(icons.download, 'icon small'), `Download ${m.name}`),
+          h('button', { class: 'btn primary large', type: 'button', onClick: () => go(2) }, dictationReady ? 'Continue' : 'Continue While It Downloads'),
+          h('button', { class: 'btn large subtle', type: 'button', onClick: () => api.cancelDownload(d!.modelId) }, 'Cancel'),
         );
+        note.textContent = '';
+      } else if (mode === 'failed') {
+        actions.replaceChildren(
+          h('button', { class: 'btn primary large', type: 'button', onClick: start }, st.failed!.received > 0 ? 'Resume Download' : 'Try Again'),
+          ...(dictationReady ? [h('button', { class: 'btn large subtle', type: 'button', onClick: () => go(2) }, 'Continue Without Cleanup')] : []),
+        );
+        note.textContent = '';
+      } else if (mode === 'download') {
+        actions.replaceChildren(h('button', { class: 'btn primary large', type: 'button', onClick: start }, svg(icons.download, 'icon small'), downloadLabel(st)));
+        note.textContent = 'Downloaded once, verified, and run entirely on this PC. You can change models any time.';
+      } else {
+        actions.replaceChildren(h('button', { class: 'btn primary large', type: 'button', onClick: async () => {
+          await api.setSettings({ cleanup: st.cleanupOn, ...(st.cleanupOn && st.cleanupId ? { cleanupModelId: st.cleanupId } : {}) });
+          go(2);
+        } }, 'Continue'));
+        note.textContent = '';
       }
     }
     return step;

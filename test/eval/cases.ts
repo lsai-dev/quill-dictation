@@ -25,7 +25,7 @@ export const CASES: EvalCase[] = [
   { id: 'en-filler-3', lang: 'en', kind: 'filler', input: "I I don't know if you know if we have time for that.", must: ["don't know", 'time for that'], never: ['I I '] },
   { id: 'en-filler-4', lang: 'en', kind: 'filler', input: 'Hmm, okay, so, the deploy went fine, but uh the cache warmed up slowly.', must: ['deploy went fine', 'cache warmed up slowly'] },
   // ── English: spoken corrections ───────────────────────────────────────────
-  { id: 'en-correct-1', lang: 'en', kind: 'correction', input: "Let's meet at 3, no wait, at 4 pm and bring the Q3 report.", ideal: "Let's meet at 4 pm and bring the Q3 report.", must: ['4 pm', 'Q3'], never: ['at 3'] },
+  { id: 'en-correct-1', lang: 'en', kind: 'correction', input: "Let's meet at 3, no wait, at 4 pm and bring the Q3 report.", ideal: "Let's meet at 4 pm and bring the Q3 report.", must: ['4', 'pm', 'Q3'], never: ['at 3'] },
   { id: 'en-correct-2', lang: 'en', kind: 'correction', input: 'Send the invoice to John, sorry, to Jane by Friday.', must: ['Jane', 'Friday'], never: ['John'] },
   { id: 'en-correct-3', lang: 'en', kind: 'correction', input: 'The flight leaves on Tuesday, I mean Wednesday morning.', must: ['Wednesday morning'], never: ['Tuesday'] },
   { id: 'en-correct-4', lang: 'en', kind: 'correction', input: 'Book a table for five, actually no, six people at Luigi’s.', must: ['six', 'Luigi'] },

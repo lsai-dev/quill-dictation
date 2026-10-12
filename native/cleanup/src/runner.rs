@@ -27,8 +27,6 @@ pub const BACKEND: &str = if cfg!(feature = "vulkan") { "vulkan" } else { "cpu" 
 const N_BATCH: u32 = 512;
 /// Most tokens proposed per speculative step.
 const DRAFT_MAX: usize = 10;
-/// After this many fruitless drafts in a row, proposals shrink until one lands again.
-const DRAFT_MISSES: u32 = 2;
 /// First four bytes of a GGUF file.
 const GGUF_MAGIC: &[u8; 4] = b"GGUF";
 
@@ -508,7 +506,7 @@ impl<'m> Session<'m> {
         let mut text: Vec<u8> = Vec::new();
         let mut drafted = 0usize;
         let mut accepted_total = 0usize;
-        let mut misses = 0u32;
+        let mut tuner = DraftTuner::new(self.gpu);
         let gen_started = Instant::now();
 
         // Appends a token's text; returns why generation must end, if it must.
@@ -545,8 +543,9 @@ impl<'m> Session<'m> {
                 break why;
             }
             let budget = max_tokens - out.len();
-            let cap = if misses >= DRAFT_MISSES { 2 } else { DRAFT_MAX };
+            let cap = tuner.choose(DRAFT_MAX);
             let draft = lookup.draft(&out, cap.min(budget).min(n_ctx.saturating_sub(n_past + 2)));
+            let step = Instant::now();
             self.batch.clear();
             self.batch.add(next, n_past as i32, &[0], true).map_err(|e| e.to_string())?;
             for (i, &d) in draft.tokens.iter().enumerate() {
@@ -571,6 +570,7 @@ impl<'m> Session<'m> {
                 candidate = argmax(self.ctx.get_logits_ith(i as i32 + 1));
             }
             accepted_total += accepted;
+            tuner.record(draft.tokens.len(), accepted, step.elapsed().as_secs_f64());
             if accepted < draft.tokens.len() {
                 // Forget the rejected part of the draft.
                 self.ctx
@@ -578,7 +578,6 @@ impl<'m> Session<'m> {
                     .map_err(|e| format!("could not rewind: {e}"))?;
             }
             if !draft.tokens.is_empty() {
-                misses = if accepted == 0 { misses + 1 } else { 0 };
                 lookup.accept(draft.start, accepted);
             }
             next = candidate;
@@ -602,6 +601,64 @@ impl<'m> Session<'m> {
     }
 }
 
+/// Picks how many tokens to draft, from what drafting has cost and gained so far.
+///
+/// A step that checks `k` drafted tokens costs about `t1 + k·c` (one token's pass plus
+/// the extra compute per drafted token) and yields `1 + p + … + p^k` tokens on average,
+/// where `p` is how often a drafted token is right. Reading the weights dominates on a
+/// GPU, so long drafts are nearly free; on a processor with few cores the extra compute
+/// is real, and shorter drafts (or none) are faster. Both costs are measured as it goes.
+struct DraftTuner {
+    t1: Option<f64>,
+    c: Option<f64>,
+    p: f64,
+    /// Plain steps since the last draft; now and then a short draft re-checks the odds.
+    plain: u32,
+}
+
+impl DraftTuner {
+    fn new(gpu: bool) -> Self {
+        DraftTuner { t1: None, c: if gpu { Some(0.0005) } else { None }, p: 0.6, plain: 0 }
+    }
+
+    fn choose(&self, max: usize) -> usize {
+        let Some(t1) = self.t1 else { return 0 }; // measure a plain step first
+        let Some(c) = self.c else { return max.min(4) }; // then one drafted step
+        let mut best = (0usize, 1.0 / t1);
+        let mut expected = 1.0;
+        let mut pk = 1.0;
+        for k in 1..=max {
+            pk *= self.p;
+            expected += pk;
+            let rate = expected / (t1 + k as f64 * c);
+            if rate > best.1 * 1.02 {
+                best = (k, rate);
+            }
+        }
+        if best.0 == 0 && self.plain >= 8 {
+            return 2.min(max);
+        }
+        best.0
+    }
+
+    fn record(&mut self, drafted: usize, accepted: usize, secs: f64) {
+        let ema = |old: Option<f64>, new: f64| Some(old.map_or(new, |o| o * 0.7 + new * 0.3));
+        if drafted == 0 {
+            self.t1 = ema(self.t1, secs);
+            self.plain += 1;
+            return;
+        }
+        self.plain = 0;
+        if let Some(t1) = self.t1 {
+            self.c = ema(self.c, ((secs - t1) / drafted as f64).max(0.0));
+        }
+        // Accepted drafts are a prefix: `accepted` successes, then one miss (unless all landed).
+        let trials = accepted + usize::from(accepted < drafted);
+        let rate = accepted as f64 / trials.max(1) as f64;
+        self.p = (self.p * 0.7 + rate * 0.3).clamp(0.05, 0.98);
+    }
+}
+
 fn find(haystack: &[u8], needle: &[u8]) -> Option<usize> {
     if needle.is_empty() || haystack.len() < needle.len() {
         return None;
@@ -618,6 +675,27 @@ mod tests {
         assert_eq!(find(b"hello</t>", b"</t>"), Some(5));
         assert_eq!(find(b"he", b"hello"), None);
         assert_eq!(find(b"abc", b""), None);
+    }
+
+    #[test]
+    fn drafts_long_when_checking_is_cheap_and_not_at_all_when_it_is_dear() {
+        let mut t = DraftTuner::new(false);
+        assert_eq!(t.choose(10), 0);
+        t.record(0, 0, 0.050);
+        assert_eq!(t.choose(10), 4);
+        // Cheap verification (GPU-like) and good guesses: draft far ahead.
+        t.record(4, 4, 0.052);
+        for _ in 0..5 {
+            t.record(8, 8, 0.054);
+        }
+        assert!(t.choose(10) >= 8);
+        // Expensive verification (few CPU cores) and poor guesses: don't draft.
+        let mut slow = DraftTuner::new(false);
+        slow.record(0, 0, 0.050);
+        for _ in 0..6 {
+            slow.record(4, 0, 0.250);
+        }
+        assert_eq!(slow.choose(10), 0);
     }
 
     #[test]

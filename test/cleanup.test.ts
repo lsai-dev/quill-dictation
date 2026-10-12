@@ -41,6 +41,11 @@ describe('acceptCleanup: what faithful cleanup may do', () => {
     expect(tidyOutput('<think>\n\n</think>\n\nHi.')).toBe('Hi.');
   });
 
+  it('collapses stuttered negations without counting them as lost', () => {
+    ok('Never, uh, never push directly to main.', 'Never push directly to main.');
+    ok('eh bueno creo que el servidor no está este no está respondiendo', 'Creo que el servidor no está respondiendo.');
+  });
+
   it('keeps numbers in either form', () => {
     ok('we need twenty five chairs', 'We need 25 chairs.');
     ok('it costs 4.50 dollars', 'It costs 4.50 dollars.');
@@ -106,6 +111,17 @@ describe('prompts', () => {
     expect(user.special).toBeFalsy();
     expect(user.text).not.toContain('<|im_end|>');
     expect(p.prefix.filter((s) => s.special).every((s) => /^<\|?\/?[a-z_]+\|?>$/.test(s.text))).toBe(true);
+  });
+
+  it('anchors other languages with their own examples and a no-translation rule', () => {
+    const es = [...buildCleanupPrompt('qwen', 'hola', 'es').prefix].map((x) => x.text).join('');
+    expect(es).toContain('The transcript is in Spanish');
+    expect(es).toContain('Creo que deberíamos mover la reunión al jueves.');
+    expect(es).not.toContain('move the meeting to Thursday');
+    const de = [...buildCleanupPrompt('granite', 'hallo', 'de').prefix].map((x) => x.text).join('');
+    expect(de).toContain('The transcript is in German');
+    const en = [...buildCleanupPrompt('qwen', 'hi', 'en').prefix].map((x) => x.text).join('');
+    expect(en).not.toContain('The transcript is in');
   });
 
   it('uses Granite role markers', () => {

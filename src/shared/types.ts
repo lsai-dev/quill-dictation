@@ -131,6 +131,8 @@ export interface SetupRecommendation {
   /** null when no cleanup model runs comfortably next to the dictation model. */
   cleanupId: string | null;
   cleanup: CleanupEstimate | null;
+  /** When nothing is comfortable: the quickest model that still runs here, offered but off. */
+  cleanupFallbackId: string | null;
   cleanupEstimates: CleanupEstimate[];
   /** Total time from finishing speaking to text, with cleanup on (seconds). */
   totalLatencySec: number;

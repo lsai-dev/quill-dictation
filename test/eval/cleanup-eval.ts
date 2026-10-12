@@ -56,6 +56,8 @@ interface CaseResult {
   final: string;
   ms: number;
   genMs: number;
+  promptMs: number;
+  promptTokens: number;
   tokens: number;
   drafted: number;
   accepted: number;
@@ -101,21 +103,25 @@ async function evaluate(m: CleanupModelSpec) {
   await p.request('load', { model: path, threads, ctx: 4096 }, undefined, 300000);
   const loadMs = Date.now() - t0;
   const t1 = Date.now();
-  await p.request('prime', { prefix: cleanupPrefix(m) }, undefined, 300000);
+  await p.request('prime', { prefix: cleanupPrefix(m, 'en') }, undefined, 300000);
   const primeMs = Date.now() - t1;
   const results: CaseResult[] = [];
   for (const c of CASES.filter((x) => cleanupSupports(m, x.lang))) {
-    const pr = buildCleanupPrompt(m.format, c.input);
+    const pr = buildCleanupPrompt(m.format, c.input, c.lang);
     const r = await p.request<Cleaned>('clean', { prefix: pr.prefix, prompt: pr.prompt, lookup: c.input, max_tokens: pr.maxTokens, stop: pr.stop }, undefined, 300000);
     const verdict = r.stop === 'limit' ? { ok: false, text: c.input, changed: false, reason: 'runaway' as const } : acceptCleanup(c.input, r.text);
     const final = verdict.ok ? verdict.text : c.input;
     const violations = check(c, final);
+    // Unsafe means the cleanup did the damage: it lost something the speaker said, or
+    // added something they didn't. A rule the spoken text already broke (an unresolved
+    // correction left as spoken) is a missed polish, never a safety problem.
+    const before = new Set(check(c, c.input));
+    const introduced = violations.filter((v) => !before.has(v));
     let status: Status;
-    if (!verdict.ok) status = 'kept';
-    else if (violations.length) status = 'UNSAFE';
+    if (!verdict.ok) status = violations.length ? 'missed' : 'kept';
+    else if (introduced.length) status = 'UNSAFE';
+    else if (violations.length) status = 'missed';
     else status = verdict.changed ? 'polished' : 'unchanged';
-    // Kept as spoken but the case needed cleanup: a missed polish, never a safety problem.
-    if (status === 'kept' && violations.length) status = 'missed';
     results.push({
       id: c.id,
       kind: c.kind,
@@ -126,6 +132,8 @@ async function evaluate(m: CleanupModelSpec) {
       final,
       ms: r.process_ms,
       genMs: r.generate_ms,
+      promptMs: r.prompt_ms,
+      promptTokens: r.prompt_tokens - r.cached_tokens,
       tokens: r.generated_tokens,
       drafted: r.drafted_tokens,
       accepted: r.accepted_tokens,
@@ -143,6 +151,10 @@ async function evaluate(m: CleanupModelSpec) {
   const drafted = results.reduce((a, r) => a + r.drafted, 0);
   const accepted = results.reduce((a, r) => a + r.accepted, 0);
   const count = (s: Status) => results.filter((r) => r.status === s).length;
+  const promptTok = results.reduce((a, r) => a + r.promptTokens, 0);
+  const promptMs = results.reduce((a, r) => a + r.promptMs, 0);
+  console.log(`  timing: prompt ${Math.round(promptTok / results.length)} new tokens at ${Math.round((promptTok / Math.max(1, promptMs)) * 1000)} tok/s · ` +
+    `output ${Math.round(tokens / results.length)} tokens at ${Math.round((tokens / Math.max(1, genMs)) * 10000) / 10} tok/s · drafts ${accepted}/${drafted} kept`);
   const exact = results.filter((r) => r.exact !== null);
   return {
     model: m.id,

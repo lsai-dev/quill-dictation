@@ -1,7 +1,7 @@
 import { FrameParams, RendererOptions, RibbonRenderer } from './renderer';
 import { clamp, follow, smoothstep, Spring } from './spring';
 
-export type RibbonState = 'hidden' | 'activating' | 'listening' | 'processing' | 'inserted' | 'cancelled' | 'error';
+export type RibbonState = 'hidden' | 'activating' | 'listening' | 'processing' | 'refining' | 'inserted' | 'cancelled' | 'error';
 
 export interface RibbonOptions extends RendererOptions {
   reducedMotion?: boolean;
@@ -186,6 +186,35 @@ export class Ribbon {
     this.edge.to(0.8, 0.6, 1);
   }
 
+  /**
+   * The transcript is ready and Cleanup is polishing it. The same loop keeps turning,
+   * but loosens toward the ribbon's resting form and its light softens and brightens —
+   * the text is nearly done — so the settle that follows is a short last step.
+   */
+  refine() {
+    this.clearTimers();
+    this.setState('refining');
+    this.start();
+    this.core.to(0, 0.35, 1);
+    this.voiceGate.to(0, 0.3, 1);
+    if (this.reduced) {
+      // Light alone: a warmer, steadier glow than transcribing.
+      this.flow.to(0, 0.3, 1);
+      this.glow.to(1.0, 0.8, 1);
+      this.edge.to(0.95, 0.8, 1);
+      return;
+    }
+    this.flow.to(0.75, 0.9, 1);
+    this.curl.to(0.45, 1.15, 0.92);
+    this.extent.to(0.98, 1.0, 0.9);
+    this.width.to(0.97, 1.0, 0.9);
+    this.breath.to(0.6, 1.2, 1);
+    this.spinRate.to(0.32, 1.4, 1);
+    this.glow.to(0.85, 0.9, 1);
+    this.edge.to(0.92, 0.9, 1);
+    this.brightness.to(1.05, 0.9, 1);
+  }
+
   /** Text was inserted: one satisfying settle, then fold away. */
   success() {
     this.clearTimers();
@@ -200,6 +229,7 @@ export class Ribbon {
       this.later(520, () => this.foldAway(0.4));
       return;
     }
+    this.brightness.to(1, 0.5, 1);
     this.curl.to(0, 0.48, 0.86);
     this.extent.to(1, 0.48, 0.8);
     this.width.to(1, 0.48, 0.8);
@@ -378,7 +408,10 @@ export class Ribbon {
     this.phase += dt * (2.4 + 7.5 * e);
     this.spin += dt * this.spinRate.value * 2.2;
 
-    if (this.flow.value > 0.001 || this.state === 'processing') this.flowPos = (this.flowPos + dt * 0.62) % 1;
+    // The glint circles while transcribing, and slows while polishing.
+    if (this.flow.value > 0.001 || this.state === 'processing' || this.state === 'refining') {
+      this.flowPos = (this.flowPos + dt * (this.state === 'refining' ? 0.4 : 0.62)) % 1;
+    }
     if (this.sweepActive) {
       this.sweep += dt * 2.3;
       if (this.sweep > 1.2) {

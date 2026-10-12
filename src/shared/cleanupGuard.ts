@@ -56,6 +56,23 @@ const FILLERS = new Set([
   'vale', 'mira', 'oye', 'osea', 'tipo', 'wait', 'sorry', 'no', 'espera', 'perdón', 'perdon', 'scratch', 'that',
 ]);
 
+/** Pure hesitations: never content in any context. */
+const HESITATIONS = new Set(['um', 'umm', 'uh', 'uhh', 'er', 'erm', 'ah', 'eh', 'hmm', 'mm', 'este']);
+
+/** Drops immediate repeats of a word or short phrase: "never never" → "never". */
+function collapseRepeats(words: string[]): string[] {
+  const out = [...words];
+  for (let n = 3; n >= 1; n--) {
+    for (let i = 0; i + 2 * n <= out.length; ) {
+      let same = true;
+      for (let k = 0; k < n; k++) if (out[i + k] !== out[i + n + k]) same = false;
+      if (same) out.splice(i + n, n);
+      else i++;
+    }
+  }
+  return out;
+}
+
 /** Phrases a speaker uses to correct themselves. Their presence licenses removing the corrected part. */
 const CORRECTION_CUE =
   /,\s*(?:sorry|perdón|perdon)\s*,|\b(?:no,? wait|wait,? no|no,? sorry|sorry,? no|i mean|scratch that|actually,? no|or rather|let me rephrase|correction|no,? espera|espera,? no|perdón|perdon|digo|mejor dicho|quiero decir|o sea,? no|no,? no)\b/i;
@@ -202,7 +219,7 @@ export function acceptCleanup(original: string, output: string): GuardResult {
 
   // Nothing new: every word of the output must come from the transcript.
   const inSet = new Set(inWords);
-  const novel = outWords.filter((w) => !inSet.has(w) && !/^\d+$/.test(w) && !isNumberWord(w));
+  const novel = outWords.filter((w) => !inSet.has(w) && !/^[\d.,]+$/.test(w) && !isNumberWord(w));
   // A new word is only tolerated as a spelling variant of a spoken one ("towards" → "toward").
   const unexplained = novel.filter((w) => w.length > 3 && !inWords.some((x) => editDistance(x, w) <= (w.length > 6 ? 2 : 1)));
   if (unexplained.length || novel.length > Math.max(1, Math.floor(outWords.length * 0.06))) return reject('added');
@@ -212,8 +229,9 @@ export function acceptCleanup(original: string, output: string): GuardResult {
   const inNums = numbersIn(original);
   for (const n of numbersIn(text)) if (!inNums.has(n)) return reject('number');
 
-  // Negations: never lost (beyond the "no" in "no, wait") and never added.
-  const negations = (s: string) => (canonicalWords(s).join(' ').match(NEGATIONS) ?? []).length;
+  // Negations: never lost (beyond the "no" in "no, wait") and never added. Stuttered
+  // repeats ("never, uh, never", "no está este no está") count once.
+  const negations = (s: string) => (collapseRepeats(canonicalWords(s).filter((w) => !HESITATIONS.has(w))).join(' ').match(NEGATIONS) ?? []).length;
   const negOut = negations(text);
   if (negOut < negations(original.replace(new RegExp(CORRECTION_CUE.source, 'gi'), ' ')) - (corrected ? 1 : 0)) return reject('negation');
   if (negOut > negations(original)) return reject('negation');

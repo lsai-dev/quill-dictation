@@ -8,6 +8,7 @@ import { clamp, follow, Spring } from './spring';
  */
 export class FallbackRibbon {
   state: RibbonState = 'hidden';
+  private angle = 0;
   onHidden?: () => void;
   onStateChange?: (s: RibbonState) => void;
   manual = false;
@@ -84,6 +85,7 @@ export class FallbackRibbon {
   show() { this.queue = []; this.set('activating'); this.opacity.to(1); this.scale.to(1, this.reduced ? 0.3 : 0.6, this.reduced ? 1 : 0.62); this.curl.to(0); this.light.to(0.5); this.later(450, () => this.set('listening')); this.start(); }
   rest() { this.show(); }
   process() { this.queue = []; this.set('processing'); this.curl.to(this.reduced ? 0 : 1); this.light.to(0.9); this.start(); }
+  refine() { this.queue = []; this.set('refining'); this.curl.to(this.reduced ? 0 : 0.45, 1.1, 0.92); this.light.to(1); this.start(); }
   success() { this.queue = []; this.set('inserted'); this.curl.to(0, 0.45, 0.9); this.light.to(1, 0.2); if (!this.reduced) this.scale.impulse(-2.2); this.later(520, () => this.fold()); this.start(); }
   cancel() { this.queue = []; this.set('cancelled'); this.curl.to(0); this.fold(); this.start(); }
   error(hold = 1600) { this.queue = []; this.set('error'); this.curl.to(0); if (!this.reduced) this.shake.impulse(-3.4); this.later(hold, () => this.fold()); this.start(); }
@@ -119,7 +121,9 @@ export class FallbackRibbon {
     const s = Math.max(0, this.scale.value);
     const breathe = this.reduced ? 0 : Math.sin(this.t * 1.37) * 0.015;
     const sy = s * (1 + breathe + (this.reduced ? 0 : e * 0.35 * Math.sin(this.t * 9)));
-    const rot = this.reduced ? 0 : this.curl.value * (this.t * 220) % 360;
+    // Integrated, so the spin slows smoothly as the curl relaxes instead of jumping.
+    this.angle = (this.angle + dt * this.curl.value * 220) % 360;
+    const rot = this.reduced ? 0 : this.angle;
     const squash = 1 - this.curl.value * 0.55;
     this.group.setAttribute('transform', `translate(${150 + this.shake.value * 18} ${this.cy}) rotate(${rot}) scale(${s * squash} ${sy})`);
     this.root.style.opacity = String(clamp(this.opacity.value));

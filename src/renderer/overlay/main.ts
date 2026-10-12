@@ -9,6 +9,7 @@ const statusEl = document.getElementById('status')!;
 const labelEl = document.getElementById('label')!;
 const stopBtn = document.getElementById('stop') as HTMLButtonElement;
 const cancelBtn = document.getElementById('cancel') as HTMLButtonElement;
+const skipBtn = document.getElementById('skip') as HTMLButtonElement;
 
 // The ribbon sits in the upper part of the window; the status pill below it.
 const ribbon = createRibbon(canvas, { viewHeight: 2.5, anchorY: 0.6 });
@@ -87,6 +88,7 @@ document.addEventListener('mouseleave', () => setHover(false));
 
 stopBtn.addEventListener('click', () => api?.action('stop'));
 cancelBtn.addEventListener('click', () => api?.action('cancel'));
+skipBtn.addEventListener('click', () => api?.action('skip'));
 
 ribbon.onHidden = () => {
   setActive(false);
@@ -124,7 +126,7 @@ function handle(c: OverlayCommand) {
       applyMotion();
       setActive(true);
       layout();
-      document.body.classList.remove('no-stop');
+      document.body.classList.remove('no-stop', 'refining');
       ribbon.show();
       if (c.microphoneId === 'none') return; // setup message follows
       setStatus('Listening', { recording: true });
@@ -152,12 +154,20 @@ function handle(c: OverlayCommand) {
       setStatus('Transcribing');
       ribbon.process();
       break;
+    case 'refine':
+      // The same object, still working: the label and the light change, the motion carries on.
+      document.body.classList.add('no-stop', 'refining');
+      setStatus('Polishing');
+      ribbon.refine();
+      break;
     case 'success':
+      document.body.classList.remove('refining');
       if (soundsOn) sounds.inserted();
       setStatus(null);
       ribbon.success();
       break;
     case 'cancel':
+      document.body.classList.remove('refining');
       wantMic = false;
       if (recording) capture.abort();
       recording = false;
@@ -165,6 +175,7 @@ function handle(c: OverlayCommand) {
       ribbon.cancel();
       break;
     case 'error':
+      document.body.classList.remove('refining');
       wantMic = false;
       if (recording) capture.abort();
       recording = false;

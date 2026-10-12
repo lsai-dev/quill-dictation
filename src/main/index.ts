@@ -172,6 +172,7 @@ async function main() {
     // The engine is built for AVX2/NEON processors; never start it where it can't run.
     if (hardware && !hardware.cpu.avx2 && !hardware.cpu.neon && est?.device !== 'gpu') return;
     await rendererKnown;
+    cleanup.setLanguage(s.language);
     try {
       await cleanup.ensure(id, downloads.pathFor(id)!, est?.device === 'gpu' && s.engine !== 'cpu' ? 'gpu' : 'cpu');
     } catch (e) {
@@ -213,6 +214,7 @@ async function main() {
     if (next.language !== prev.language || next.engine !== prev.engine || next.modelId !== prev.modelId) plan();
     if (next.modelId !== prev.modelId || next.engine !== prev.engine) void loadModel();
     if (next.cleanup !== prev.cleanup || next.cleanupModelId !== prev.cleanupModelId || next.engine !== prev.engine) void loadCleanup();
+    if (next.language !== prev.language) cleanup.setLanguage(next.language);
     if (next.launchAtLogin !== prev.launchAtLogin) applyLoginItem(next.launchAtLogin);
     if (next.motion !== prev.motion) overlay.send({ type: 'theme', ...theme() });
     broadcast();
