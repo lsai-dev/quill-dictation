@@ -6,6 +6,7 @@ Two small Rust programs that the Electron app spawns and talks to over stdin/std
 | --- | --- | --- |
 | `engine/` (`quill-engine`) | `quill-engine` | Local speech-to-text with whisper.cpp (via `whisper-rs` 0.16 / whisper.cpp 1.8.3) |
 | `helper/` (`quill-native`) | `quill-native` | Windows integration: global hotkey hook, Escape capture, paste/type injection, foreground window; plus a cross-platform hardware probe |
+| `cleanup/` (`quill-cleanup`) | `quill-cleanup` | Local transcript cleanup with a small language model (llama.cpp via `llama-cpp-2` 0.1.159) |
 
 `common/protocol.rs` (line-delimited JSON framing) is compiled into both via `#[path]`.
 
@@ -20,6 +21,10 @@ cargo build --release                                   # both binaries, CPU eng
 cargo build --release -p quill-engine --features vulkan  # Vulkan engine (needs the Vulkan SDK; VULKAN_SDK set on Windows)
 cargo build --release -p quill-engine --features cuda    # CUDA engine (needs the CUDA toolkit)
 cargo test                                               # unit tests (run on any OS)
+# The cleanup engine: build with an AVX2 baseline (llama.cpp takes its CPU kernels from
+# Rust's target features) in its own target directory.
+RUSTFLAGS="-C target-feature=+avx,+avx2,+fma,+f16c,+bmi2" CARGO_TARGET_DIR=target-cleanup cargo build --release -p quill-cleanup
+RUSTFLAGS="-C target-feature=+avx,+avx2,+fma,+f16c,+bmi2" CARGO_TARGET_DIR=target-cleanup cargo build --release -p quill-cleanup --features vulkan
 ```
 
 Ship the Vulkan and CPU engines as separate binaries: the app should start the Vulkan one
@@ -121,3 +126,36 @@ cannot be installed (config commands retry the installation).
   "… Graphics" APUs, Qualcomm/Arm/Apple, or < 512 MiB dedicated memory. Linux reads
   procfs/sysfs, names GPUs via `nvidia-smi` or `pci.ids`; macOS uses `sysctl` and reports
   no GPUs.
+
+### quill-cleanup
+
+Startup: `{"event":"ready","version":"0.1.0","backend":"cpu"|"vulkan","system_info":"CPU : ... AVX2 = 1 ..."}`
+
+Model work runs on a worker thread; the main thread keeps reading stdin, so `cancel`
+takes effect between two decoding steps (milliseconds). Requests are handled in order.
+
+| Request | Reply fields |
+| --- | --- |
+| `{"cmd":"load","model":"/abs/model.gguf","gpu":false,"threads":0,"ctx":4096}` | `load_ms`, `gpu`, `device`, `threads`, `ctx`, `recurrent`, `model_bytes`, `params` |
+| `{"cmd":"prime","prefix":[segments]}` | `prefix_tokens`, `prime_ms` |
+| `{"cmd":"clean","prefix":[segments],"prompt":[segments],"lookup":"transcript","max_tokens":512,"stop":["..."]}` | `text`, `stop` (`eog` \| `stop` \| `limit`), `prompt_tokens`, `cached_tokens`, `generated_tokens`, `drafted_tokens`, `accepted_tokens`, `prompt_ms`, `generate_ms`, `process_ms` |
+| `{"cmd":"cancel","target":<request id>}` | — (the target, and anything queued with a lower id, fails with `"cancelled"`) |
+| `{"cmd":"unload"}` / `{"cmd":"info"}` / `{"cmd":"ping"}` / `{"cmd":"shutdown"}` | as for quill-engine |
+
+* **Segments** are `{"text": "...", "special": bool}`. Special segments are tokenized
+  with control-token parsing (chat-template markers); others never are, so text from a
+  transcript can't forge a turn.
+* **Prefix caching**: `prefix` (instructions + examples) is evaluated once and reused
+  while it's unchanged — by trimming the KV cache back to it for dense models, or by
+  restoring a state snapshot for recurrent/hybrid models (which can't trim).
+  `QUILL_CLEANUP_SNAPSHOT=1` forces the snapshot path (tests).
+* **Decoding** is greedy. For dense models, drafts are proposed by matching the output
+  against `lookup` (prompt-lookup decoding) and verified in one batch; rejected tokens
+  are removed from the KV cache. The output is identical to plain greedy decoding. The
+  draft length adapts to the measured cost of a verification step and the acceptance
+  rate.
+* `load` refuses non-GGUF or missing files without letting go of the current model.
+  With `gpu: true` in a Vulkan build and no GPU device, `load` fails (llama.cpp would
+  quietly use the CPU); the app then starts the CPU build.
+* `QUILL_CLEANUP_LOG=off|error|warn|info|debug` (default `warn`) controls llama.cpp's
+  logging on stderr.
