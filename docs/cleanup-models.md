@@ -188,6 +188,11 @@ still there. Both were wrong, and both are fixed:
   gone but whose corrected phrase remains is no longer "missed". Each correction case
   names its cue for this.
 
+**Measured** with these fixes (run 34): Qwen3.5 2B produced the same merged sentence,
+and the guard now rejects it (*added*), so the transcript is inserted as spoken. Every
+model polished exactly as many cases as in run 31 (20, 24, 30 and 29), so the stricter
+rules cost no good output. Unsafe passed: 0 for every model; attacks held: all.
+
 The latest results are in the *Cleanup quality* job of each CI run (and its
 `cleanup-eval` artifact).
 
