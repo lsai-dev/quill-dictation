@@ -24,6 +24,8 @@ export interface DictationCleanup {
 /** A press shorter than this is a tap (toggle); longer is hold-to-talk. */
 const HOLD_THRESHOLD_MS = 380;
 const MAX_RECORDING_MS = 10 * 60 * 1000;
+/** Polishing quicker than this goes straight from "Transcribing" to inserted. */
+const REFINE_REVEAL_MS = 220;
 
 export interface DictationDeps {
   overlay: OverlayWindow;
@@ -194,9 +196,14 @@ export class Dictation extends EventEmitter {
       let polished: Awaited<ReturnType<DictationCleanup['polish']>> | null = null;
       if (this.d.cleanup?.ready()) {
         this.phase = 'refining';
-        this.d.overlay.send({ type: 'refine' });
         this.emit('phase', this.phase);
+        // A polish that's over in a blink shouldn't flash a label; one that takes a
+        // moment shows it (and the control to skip it).
+        const reveal = setTimeout(() => {
+          if (session === this.session && this.phase === 'refining') this.d.overlay.send({ type: 'refine' });
+        }, REFINE_REVEAL_MS);
         polished = await this.d.cleanup.polish(text, s.language === 'auto' ? r.language || 'auto' : s.language);
+        clearTimeout(reveal);
         if (session !== this.session) return; // cancelled meanwhile
         log.info(`dictation ${session}: cleanup ${polished.outcome} in ${polished.ms} ms`);
       }

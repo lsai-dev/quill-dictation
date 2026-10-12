@@ -48,6 +48,8 @@ Quill estimates, for every model, the time to transcribe a typical 10-second sen
 
 Examples: an RTX 3060 gets *Large · Compact* on the GPU in ~0.7 s; a 4-core Iris Xe ultrabook gets *Small · Compact* on the CPU; a 4 GB Celeron laptop gets *Tiny*.
 
+With Cleanup the plan covers both models (estimates for a typical sentence): the RTX 3060 adds *Qwen3.5 4B* on the same card (+0.6 s); a 6-core desktop without a graphics card adds *S1-mini* for English (+0.6 s) or *Granite 4.0 Micro* for Spanish (+2.3 s); the Celeron gets no cleanup, with the reason shown. The speed model is calibrated against measurements of every catalog model and pinned by a test.
+
 ## Cleanup
 
 Two roles, one setup:

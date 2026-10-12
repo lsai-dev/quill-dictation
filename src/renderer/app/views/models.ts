@@ -381,9 +381,9 @@ function ChoiceRow(role: 'dictation' | 'cleanup', id: string, onToggle: () => vo
               class: 'btn primary',
               type: 'button',
               onClick: async () => {
-                if (role === 'cleanup') await api.setSettings({ cleanupModelId: id, cleanup: true });
+                // What you use now keeps working while this downloads; it switches once it's here.
                 const r = await api.downloadModel(id);
-                if (r.ok && role === 'dictation') await api.useModel(id);
+                if (r.ok) await (role === 'dictation' ? api.useModel(id) : api.useCleanupModel(id));
               },
             },
             svg(icons.download, 'icon small'),

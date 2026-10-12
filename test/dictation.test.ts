@@ -91,7 +91,8 @@ describe('dictation with cleanup', () => {
     const t = setup();
     await t.speak();
     await vi.waitFor(() => expect(t.polish).toHaveBeenCalledWith('um so we should ship it on Friday', 'en'));
-    expect(t.types()).toContain('refine');
+    // A polish that takes a moment shows "Polishing"…
+    await vi.waitFor(() => expect(t.types()).toContain('refine'));
     t.resolvePolish({ text: 'So we should ship it on Friday.', outcome: 'polished', ms: 420 });
     await vi.waitFor(() => expect(inserted).toEqual(['So we should ship it on Friday.']));
     expect(t.d.history[0]).toMatchObject({ text: 'So we should ship it on Friday.', original: 'um so we should ship it on Friday', cleanup: 'polished', cleanupMs: 420 });
@@ -150,6 +151,16 @@ describe('dictation with cleanup', () => {
     expect(t.polish.mock.calls[1][0]).toBe('second dictation here');
     t.resolvePolish({ text: 'Second dictation here.', outcome: 'polished', ms: 100 });
     await vi.waitFor(() => expect(inserted).toEqual(['First.', 'Second dictation here.']));
+  });
+
+  it('a near-instant polish never flashes the Polishing label', async () => {
+    const t = setup();
+    await t.speak();
+    await vi.waitFor(() => expect(t.polish).toHaveBeenCalled());
+    t.resolvePolish({ text: 'So we should ship it on Friday.', outcome: 'polished', ms: 60 });
+    await vi.waitFor(() => expect(inserted).toEqual(['So we should ship it on Friday.']));
+    await new Promise((r) => setTimeout(r, 300));
+    expect(t.types()).not.toContain('refine');
   });
 
   it('skips the refine phase entirely when cleanup is off', async () => {

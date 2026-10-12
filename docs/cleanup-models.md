@@ -103,7 +103,7 @@ dictations covering fillers, corrections, punctuation, already-clean text, dicta
 questions and instructions, identifiers, numbers and negations. CI runs it on every
 push (CPU only: a 4-vCPU Intel Xeon Platinum 8573C, 4 threads).
 
-**Measured** on the CI runner before language-anchored prompts (run 26):
+**Measured**, first run (run 26, English instructions for every language):
 
 | Model | Cases | Polished | Unchanged | Kept by guard | Unsafe passed | Attacks held | Median added time |
 |---|---|---|---|---|---|---|---|
@@ -114,19 +114,35 @@ push (CPU only: a 4-vCPU Intel Xeon Platinum 8573C, 4 threads).
 
 "Unsafe passed" counts outputs that damaged the text (lost or added content) and got
 past the guard. None did. The guard caught one-word answers ("banana"), a model obeying
-"summarize the following…", and translations.
+"summarize the following…", and translations. Three things changed as a result:
 
-What this run changed:
-
-- **Granite and Qwen3.5 2B translated Spanish into English** when instructed in
-  English. Prompts are now anchored to the dictation language, with worked examples in
-  that language and an explicit no-translation rule. Qwen3.5 4B handled Spanish
-  correctly either way.
+- **Granite and Qwen3.5 2B translated Spanish into English** when instructed only in
+  English. The instructions now forbid translation, the examples include Spanish, and
+  every request names its language. Qwen3.5 4B handled Spanish correctly either way.
 - **Fixed-length drafting barely helped a 3B model on 4 vCPUs**, because checking 10
   drafted tokens is compute-bound there. Draft length now adapts to what verification
   costs on the machine (see *Speed*).
 - The guard counted "Never, uh, never push…" → "Never push…" as a lost negation. It now
   collapses stuttered repeats first.
+
+**Measured**, second run (run 27, language-anchored prompts, adaptive drafting):
+
+| Model | Cases | Polished | Unchanged | Kept by guard | Missed | Unsafe passed | Attacks held | Median added time | Generation | Drafts kept |
+|---|---|---|---|---|---|---|---|---|---|---|
+| S1-mini | 27 | 20 | 6 | 1 | 0 | 0 | 6/6 | 0.45 s | 65.4 tok/s | 84% |
+| Qwen3.5 2B | 39 | 24 | 9 | 2 | 4 | 0 | 9/9 | 1.37 s | 21.5 tok/s | — |
+| Granite 4.0 Micro | 39 | 28 | 8 | 3 | 0 | 0 | 9/9 | 2.47 s | 12.4 tok/s | 82% |
+| Qwen3.5 4B | 39 | 29 | 10 | 0 | 0 | 0 | 9/9 | 3.23 s | 10.1 tok/s | — |
+
+"Missed" means a correction was left as spoken. The output then still contains the
+corrected phrase, which is safe but unpolished. Qwen3.5 2B misses some Spanish
+corrections. Qwen3.5 4B polished or correctly left alone every case.
+
+These numbers also exposed a cost: a prompt prefix per language had to be re-read
+whenever the language changed (13–34 s on this CPU), which would hurt bilingual users
+dictating with *Detect automatically*. The cached instructions are now
+language-neutral: English and Spanish examples together, each labelled, with the
+language named in each request.
 
 The latest results are in the *Cleanup quality* job of each CI run (and its
 `cleanup-eval` artifact).
@@ -188,10 +204,13 @@ All figures it produces are **estimates**:
   Cleanup goes on the graphics card only when it fits in the video memory left after the
   dictation model and a context reserve; otherwise it goes in RAM.
 - **Latency.** Generation is memory-bandwidth bound: ≈32 GB/s effective on the reference
-  desktop, scaled by the processor's speed, or the graphics card's bandwidth by class.
-  Reading the prompt is compute-bound. Drafting divides decode time for dense models.
-  The constants are calibrated against the published llama.cpp figures above and Quill's
-  CI measurements.
+  desktop (bandwidth depends little on core count), or the graphics card's bandwidth by
+  class. Reading the prompt is compute-bound: ≈480 GFLOP/s on the reference desktop,
+  scaled by cores and vector width. Drafting helps dense models by roughly
+  `read time ÷ compute time − 1` (between ×1 and ×2.5): a lot for small models and on
+  graphics cards, little for 3B models on two cores. Fitted to the CI measurements, the
+  model predicts all four catalog models' generation speed within 15%, erring slow
+  (`test/recommend.test.ts`).
 - **Choice.** Among models that handle the language, fit and add ≤ 3 s, pick the best
   quality net of latency, download size and memory pressure. If none is comfortable,
   the quickest one that still runs is offered but **off**, with an honest "adds about N
