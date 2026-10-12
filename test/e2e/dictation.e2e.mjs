@@ -30,12 +30,24 @@ writeFileSync(join(userData, 'settings.json'), JSON.stringify({ onboarded: true,
 const app = await electron.launch({
   cwd: resolve('.'),
   args: ['.', '--no-sandbox', `--user-data-dir=${userData}`, '--use-fake-ui-for-media-stream', '--use-fake-device-for-media-stream', `--use-file-for-fake-audio-capture=${resolve(audio)}`],
-  env: { ...process.env, QUILL_E2E: '1' },
+  env: { ...process.env, QUILL_E2E: '1', QUILL_DEBUG: '1' },
   timeout: 60000,
 });
+const output = [];
+app.process().stdout?.on('data', (d) => output.push(String(d)));
+app.process().stderr?.on('data', (d) => output.push(String(d)));
 const fail = async (msg) => {
   console.error('✗', msg);
-  await app.close();
+  const status = await app.evaluate(() => globalThis.__quill?.engine.status).catch(() => null);
+  console.error('  engine status:', JSON.stringify(status));
+  console.error('  app log (tail):');
+  for (const line of output.join('').split(/\r?\n/).filter((l) => l.trim() && !/dbus|Fontconfig/.test(l)).slice(-60)) console.error('   ', line);
+  try {
+    if (shots) copyFileSync(join(userData, 'logs', 'quill.log'), join(shots, 'quill.log'));
+  } catch {
+    console.error('  (no quill.log in the test profile)');
+  }
+  await app.close().catch(() => undefined);
   process.exit(1);
 };
 const main = (fn, arg) => app.evaluate(fn, arg);

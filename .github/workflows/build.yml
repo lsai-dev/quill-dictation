@@ -87,5 +87,7 @@ jobs:
         if: always()
         with:
           name: e2e-screenshots
-          path: e2e/*.png
+          path: |
+            e2e/*.png
+            e2e/*.log
           if-no-files-found: ignore
